@@ -1,4 +1,5 @@
-==Jogging a 3d printer with a gamepad.==
+Jogging a 3d printer with a gamepad.
+====================================
 
 First, create a configuration for your specific joystick. This will ask you
 to move the joystick to get the right axis and button mapping:
