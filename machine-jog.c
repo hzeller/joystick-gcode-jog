@@ -488,7 +488,7 @@ int main(int argc, char **argv) {
     const char *filename = NULL;
 
     int opt;
-    while ((opt = getopt(argc, argv, "C:j:x:z:")) != -1) {
+    while ((opt = getopt(argc, argv, "C:j:x:z:h")) != -1) {
         switch (opt) {
         case 'C':
             op = DO_CREATE_CONFIG;
