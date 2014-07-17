@@ -6,9 +6,14 @@ to move the joystick to get the right axis and button mapping:
 
     ./machine-jog -C joystick.config
 
-The machine-jog config communicates via stdin/stdout with the machine; for
-a machine that is connected via a terminal line, you can use socat to wire
-it up:
+For best flexibility, machine-jog communicates via stdin/stdout with the
+machine, which means you need to 'wire up' this communication with the means
+you can communicate with the machine.
+For instance, if your machine is connected via a terminal line (very common),
+you can use `socat` to wire it up:
 
     socat EXEC:"./machine-jog -j joystick.config" /dev/ttyACM0,raw,echo=0,b230400
 
+This tells `socat` to execute the `machine-jog` binary with the joystick
+configuration and connect its stdin/stdout to the `/dev/ttyACM0` terminal
+with a bitrate of 230400.
