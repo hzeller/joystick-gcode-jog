@@ -14,7 +14,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-static const int max_feedrate_mm_p_sec_xy = 80;
+static const int max_feedrate_mm_p_sec_xy = 120;
 static const int max_feedrate_mm_p_sec_z = 1;  // Z is typically pretty slow
 
 static const long interval_msec = 20;
@@ -380,7 +380,7 @@ int main(int argc, char **argv) {
         DO_NOTHING,
         DO_CREATE_CONFIG,
         DO_JOG
-    } op;
+    } op = DO_NOTHING;
     const char *filename = NULL;
 
     int opt;
