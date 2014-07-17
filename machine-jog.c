@@ -460,6 +460,7 @@ static int usage(const char *progname) {
     fprintf(stderr, "Usage: %s <options>\n"
             "  -C <config>  : Create a configuration file for Joystick\n"
             "  -j <config>  : Jog machine using config\n"
+            "  -h           : Home on startup\n"
             "  -x <speed>   : feedrate for xy in mm/s\n"
             "  -z <speed>   : feedrate for z in mm/s\n",
             progname);
