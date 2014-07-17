@@ -14,6 +14,8 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#define WAIT_FOR_OK_FOR_MOVE 1
+
 static const int max_feedrate_mm_p_sec_xy = 120;
 static const int max_feedrate_mm_p_sec_z = 1;  // Z is typically pretty slow
 
@@ -316,6 +318,10 @@ void GCodeGoto(struct Vector *pos, float feedrate_mm_sec) {
     printf("G1 X%.3f Y%.3f Z%.3f F%.3f\n", pos->axis[AXIS_X], pos->axis[AXIS_Y],
            pos->axis[AXIS_Z], feedrate_mm_sec * 60);
     fflush(stdout);
+#if WAIT_FOR_OK_FOR_MOVE
+    // This slows things down, but looks like this is
+    WaitForOk(stdin);
+#endif
 }
 
 // Returns 1 if any gcode has been output or 0 if there was no need.
@@ -460,6 +466,7 @@ int main(int argc, char **argv) {
     struct Configuration config;
     memset(&config, 0, sizeof(config));
 
+    // The Joystick.
     const int js_fd = open("/dev/input/js0", O_RDONLY);
     if (js_fd < 0) {
         perror("Opening joystick");
