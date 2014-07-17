@@ -16,8 +16,11 @@
 
 #define WAIT_FOR_OK_FOR_MOVE 1
 
-static const int max_feedrate_mm_p_sec_xy = 120;
-static const int max_feedrate_mm_p_sec_z = 1;  // Z is typically pretty slow
+static const int kMaxFeedrate_xy = 120;
+static const int kMaxFeedrate_z = 1;  // Z is typically pretty slow
+
+static int max_feedrate_mm_p_sec_xy;
+static int max_feedrate_mm_p_sec_z;
 
 static const long interval_msec = 20;
 
@@ -456,12 +459,16 @@ int JogMachine(int js_fd, char do_homing, const struct Configuration *config) {
 static int usage(const char *progname) {
     fprintf(stderr, "Usage: %s <options>\n"
             "  -C <config>  : Create a configuration file for Joystick\n"
-            "  -j <config>  : Jog machine using config\n",
+            "  -j <config>  : Jog machine using config\n"
+            "  -x <speed>   : feedrate for xy in mm/s\n"
+            "  -z <speed>   : feedrate for z in mm/s\n",
             progname);
     return 1;
 }
 
 int main(int argc, char **argv) {
+    max_feedrate_mm_p_sec_xy = kMaxFeedrate_xy;
+    max_feedrate_mm_p_sec_z  = kMaxFeedrate_z;
     char do_homing = 0;
     struct Configuration config;
     memset(&config, 0, sizeof(config));
@@ -481,7 +488,7 @@ int main(int argc, char **argv) {
     const char *filename = NULL;
 
     int opt;
-    while ((opt = getopt(argc, argv, "C:j:")) != -1) {
+    while ((opt = getopt(argc, argv, "C:j:x:z:")) != -1) {
         switch (opt) {
         case 'C':
             op = DO_CREATE_CONFIG;
@@ -490,6 +497,24 @@ int main(int argc, char **argv) {
 
         case 'h':
             do_homing = 1;
+            break;
+
+        case 'x':
+            max_feedrate_mm_p_sec_xy = atoi(optarg);
+            if (max_feedrate_mm_p_sec_xy <= 1) {
+                fprintf(stderr, "Peculiar value -x %d",
+                        max_feedrate_mm_p_sec_xy);
+                return usage(argv[0]);
+            }
+            break;
+
+        case 'z':
+            max_feedrate_mm_p_sec_z = atoi(optarg);
+            if (max_feedrate_mm_p_sec_z <= 1) {
+                fprintf(stderr, "Peculiar value -z %d",
+                        max_feedrate_mm_p_sec_z);
+                return usage(argv[0]);
+            }
             break;
 
         case 'j':
