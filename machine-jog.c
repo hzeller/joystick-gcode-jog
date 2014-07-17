@@ -183,20 +183,33 @@ static void DiscardAllInput(int fd, int timeout, char do_echo) {
     }
 }
 
+static int ReadLine(int fd, char *result, int len,
+                    char do_echo) {
+    int bytes_read = 0;
+    char c = 0;
+    while (c != '\n' && c != '\r' && bytes_read < len) {
+        if (read(fd, &c, 1) < 0)
+            return -1;
+        ++bytes_read;
+        *result++ = c;
+        if (do_echo) write(STDERR_FILENO, &c, 1);  // echo back.
+    }
+    *result = '\0';
+    return bytes_read;
+}
+
 // Ok comes on a single line.
-static void WaitForOk(FILE *in) {
+static void WaitForOk(int fd) {
+    char buffer[512];
     char done = 0;
     while (!done) {
-        char *buffer = NULL;
-        size_t len;
-        if (getline(&buffer, &len, in) < 0)
+        if (ReadLine(fd, buffer, sizeof(buffer), 0) < 0)
             break;
-        if (strcmp(buffer, "ok\n") == 0) {
+        if (strncmp(buffer, "ok", 2) == 0) {
             done = 1;
         } else {
             fprintf(stderr, "SKIP %s", buffer);
         }
-        free(buffer);
     }
 }
 
@@ -300,13 +313,15 @@ static int CreateConfig(int js_fd, struct Configuration *config) {
 
 // Read coordinates from printer.
 static int GetCoordinates(struct Vector *pos) {
-    DiscardAllInput(STDIN_FILENO, 10, 0);
+    DiscardAllInput(STDIN_FILENO, 100, 1);
 
     printf("M114\n"); fflush(stdout);  // read coordinates.
     fprintf(stderr, "Reading initial absolute position\n");
-    if (fscanf(stdin, "X:%fY:%fZ:%f", &pos->axis[AXIS_X], &pos->axis[AXIS_Y],
+    char buffer[512];
+    ReadLine(STDIN_FILENO, buffer, sizeof(buffer), 1);
+    if (sscanf(buffer, "X:%f Y:%f Z:%f", &pos->axis[AXIS_X], &pos->axis[AXIS_Y],
                &pos->axis[AXIS_Z]) == 3) {
-        WaitForOk(stdin);
+        WaitForOk(STDIN_FILENO);
         fprintf(stderr, "Got (x/y/z) = (%.3f/%.3f/%.3f)\n",
                 pos->axis[AXIS_X], pos->axis[AXIS_Y],
                 pos->axis[AXIS_Z]);
@@ -323,7 +338,7 @@ void GCodeGoto(struct Vector *pos, float feedrate_mm_sec) {
     fflush(stdout);
 #if WAIT_FOR_OK_FOR_MOVE
     // This slows things down, but looks like this is
-    WaitForOk(stdin);
+    WaitForOk(STDIN_FILENO);
 #endif
 }
 
@@ -388,21 +403,21 @@ int JogMachine(int js_fd, char do_homing, const struct Configuration *config) {
     DiscardAllInput(STDIN_FILENO, 5000, 1);
     fprintf(stderr, "done.\n");
 
-    printf("G21\n"); fflush(stdout); WaitForOk(stdin);  // Switch to metric.
+    printf("G21\n"); fflush(stdout); WaitForOk(STDIN_FILENO);  // Switch to metric.
 
     char is_homed = 0;
 
     if (do_homing) {
         // Unfortunately, connecting to some Marlin instances resets it.
         // So home that we are in a defined state.
-        printf("G28\n"); fflush(stdout); WaitForOk(stdin);   // Home.
+        printf("G28\n"); fflush(stdout); WaitForOk(STDIN_FILENO);   // Home.
         is_homed = 1;
     }
 
     // Relative mode (G91) seems to be pretty badly implemented and does not
     // deal with very small increments (which are rounded away).
     // So let's be absolute and keep track of the current position ourself.
-    printf("G90\n"); fflush(stdout); WaitForOk(stdin);  // Absolute coordinates.
+    printf("G90\n"); fflush(stdout); WaitForOk(STDIN_FILENO);  // Absolute coordinates.
 
     if (!GetCoordinates(&machine_pos))
         return 1;
@@ -447,7 +462,7 @@ int JogMachine(int js_fd, char do_homing, const struct Configuration *config) {
             if (buttons.button[BUTTON_HOME] && !is_homed) {
                 is_homed = 1;
                 DiscardAllInput(STDIN_FILENO, 10, 0);
-                printf("G28\n"); fflush(stdout); WaitForOk(stdin);
+                printf("G28\n"); fflush(stdout); WaitForOk(STDIN_FILENO);
                 if (!GetCoordinates(&machine_pos))
                     return 1;
             }
