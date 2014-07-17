@@ -57,6 +57,13 @@ struct Configuration {
     int button_channel[NUM_BUTTONS];
 };
 
+struct SavedPoints {
+    struct Vector a;
+    struct Vector b;
+    struct Vector c;
+    struct Vector d;
+};
+
 void DumpConfig(const char *filename, const struct Configuration *config) {
     FILE *out = fopen(filename, "w");
     if (out == NULL) return;
@@ -260,8 +267,9 @@ static void GetAxisConfig(int js_fd,
 static void GetButtonConfig(int js_fd, const char *msg, int *channel) {
     fprintf(stderr, "%s", msg); fflush(stderr);
     WaitAnyButtonPress(js_fd, channel);
-    fprintf(stderr, "Thanks. Now release.\n");
+    fprintf(stderr, "Thanks. Now release."); fflush(stderr);
     WaitForButtonRelease(js_fd, *channel);
+    fprintf(stderr, "\n");
 }
 
 // Create configuration
@@ -274,6 +282,14 @@ static int CreateConfig(int js_fd, struct Configuration *config) {
                   &config->axis_config[AXIS_Z]);
     GetButtonConfig(js_fd,
                     "Press HOME button.", &config->button_channel[BUTTON_HOME]);
+    GetButtonConfig(js_fd, "Press Memory A button.",
+                    &config->button_channel[BUTTON_STORE_A]);
+    GetButtonConfig(js_fd, "Press Memory B button.",
+                    &config->button_channel[BUTTON_STORE_B]);
+    GetButtonConfig(js_fd, "Press Memory C button.",
+                    &config->button_channel[BUTTON_STORE_C]);
+    GetButtonConfig(js_fd, "Press Memory D button.",
+                    &config->button_channel[BUTTON_STORE_D]);
     return 1;
 }
 
@@ -296,6 +312,12 @@ static int GetCoordinates(struct Vector *pos) {
     }
 }
 
+void GCodeGoto(struct Vector *pos, float feedrate_mm_sec) {
+    printf("G1 X%.3f Y%.3f Z%.3f F%.3f\n", pos->axis[AXIS_X], pos->axis[AXIS_Y],
+           pos->axis[AXIS_Z], feedrate_mm_sec * 60);
+    fflush(stdout);
+}
+
 // Returns 1 if any gcode has been output or 0 if there was no need.
 int OutputJogGCode(struct Vector *pos, const struct Vector *speed) {
     // We get the timeout in regular intervals.
@@ -314,9 +336,7 @@ int OutputJogGCode(struct Vector *pos, const struct Vector *speed) {
         pos->axis[a] = pos->axis[a] + speed->axis[a] * feedrate * interval;
         if (pos->axis[a] < 0) pos->axis[a] = 0;
     }
-    printf("G1 X%.3f Y%.3f Z%.3f F%.3f\n", pos->axis[AXIS_X], pos->axis[AXIS_Y],
-           pos->axis[AXIS_Z], feedrate * 60);
-    fflush(stdout);
+    GCodeGoto(pos, feedrate);
     fprintf(stderr, "Goto (x/y/z) = (%.3f/%.3f/%.3f) "
             "(js:%.1f/%.1f/%.1f) F=%.3f mm/s\n",
             pos->axis[AXIS_X], pos->axis[AXIS_Y], pos->axis[AXIS_Z],
@@ -325,13 +345,31 @@ int OutputJogGCode(struct Vector *pos, const struct Vector *speed) {
     return 1;
 }
 
+void HandlePlaceMemory(enum Button button, char is_pressed,
+                       struct Vector *storage,
+                       int *accumulated_timeout,
+                       struct Vector *machine_pos) {
+    if (is_pressed) {
+        *accumulated_timeout = 0;
+    } else {  // we act on release
+        if (*accumulated_timeout > 500) {
+            memcpy(storage, machine_pos, sizeof(*storage)); // save
+        } else {
+            memcpy(machine_pos, storage, sizeof(*storage)); // restore
+            GCodeGoto(machine_pos, max_feedrate_mm_p_sec_xy);
+        }
+    }
+}
+
 int JogMachine(int js_fd, char do_homing, const struct Configuration *config) {
     struct Vector speed_vector;
     struct Vector machine_pos;
     struct ButtonState buttons;
+    struct SavedPoints saved;
     memset(&speed_vector, 0, sizeof(speed_vector));
     memset(&machine_pos, 0, sizeof(machine_pos));
     memset(&buttons, 0, sizeof(buttons));
+    memset(&saved, 0, sizeof(saved));
 
     // Skip initial stuff coming from the machine. We need to have
     // a defined starting way to read the absolute coordinates.
@@ -343,10 +381,13 @@ int JogMachine(int js_fd, char do_homing, const struct Configuration *config) {
 
     printf("G21\n"); fflush(stdout); WaitForOk(stdin);  // Switch to metric.
 
+    char is_homed = 0;
+
     if (do_homing) {
         // Unfortunately, connecting to some Marlin instances resets it.
         // So home that we are in a defined state.
         printf("G28\n"); fflush(stdout); WaitForOk(stdin);   // Home.
+        is_homed = 1;
     }
 
     // Relative mode (G91) seems to be pretty badly implemented and does not
@@ -354,27 +395,48 @@ int JogMachine(int js_fd, char do_homing, const struct Configuration *config) {
     // So let's be absolute and keep track of the current position ourself.
     printf("G90\n"); fflush(stdout); WaitForOk(stdin);  // Absolute coordinates.
 
-    char last_was_homing = 0;
-
     if (!GetCoordinates(&machine_pos))
         return 1;
+
+    int accumulated_timeout;
 
     for (;;) {
         switch (WaitForJoystickButton(js_fd, interval_msec,
                                       config, &speed_vector, &buttons)) {
-        case -1:  // timeout
+        case -1:  // timeout, i.e. our regular update interval.
+            accumulated_timeout += interval_msec;
             if (OutputJogGCode(&machine_pos, &speed_vector)) {
                 // We did emit some gcode. Now we're not homed anymore
-                last_was_homing = 0;
+                is_homed = 0;
             } else {
                 // Some quiet phase: discard all the 'ok's
                 DiscardAllInput(STDIN_FILENO, 10, 0);
             }
             break;
 
-        case BUTTON_HOME:
-            if (buttons.button[BUTTON_HOME] && !last_was_homing) {
-                last_was_homing = 1;
+        case BUTTON_STORE_A:
+            HandlePlaceMemory(BUTTON_STORE_A, buttons.button[BUTTON_STORE_A],
+                              &saved.a, &accumulated_timeout, &machine_pos);
+            break;
+
+        case BUTTON_STORE_B:
+            HandlePlaceMemory(BUTTON_STORE_B, buttons.button[BUTTON_STORE_B],
+                              &saved.b, &accumulated_timeout, &machine_pos);
+            break;
+
+        case BUTTON_STORE_C:
+            HandlePlaceMemory(BUTTON_STORE_C, buttons.button[BUTTON_STORE_C],
+                              &saved.c, &accumulated_timeout, &machine_pos);
+            break;
+
+        case BUTTON_STORE_D:
+            HandlePlaceMemory(BUTTON_STORE_D, buttons.button[BUTTON_STORE_D],
+                              &saved.d, &accumulated_timeout, &machine_pos);
+            break;
+
+        case BUTTON_HOME:  // only home if not already.
+            if (buttons.button[BUTTON_HOME] && !is_homed) {
+                is_homed = 1;
                 DiscardAllInput(STDIN_FILENO, 10, 0);
                 printf("G28\n"); fflush(stdout); WaitForOk(stdin);
                 if (!GetCoordinates(&machine_pos))
