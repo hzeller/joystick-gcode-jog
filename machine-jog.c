@@ -48,6 +48,7 @@ struct ButtonState {
 
 struct AxisConfig {
     int channel;
+    int zero;
     int max_value;
 };
 
@@ -60,8 +61,9 @@ void DumpConfig(const char *filename, const struct Configuration *config) {
     FILE *out = fopen(filename, "w");
     if (out == NULL) return;
     for (int i = 0; i < NUM_AXIS; ++i) {
-        fprintf(out, "A:%d %d\n",
+        fprintf(out, "A:%d %d %d\n",
                 config->axis_config[i].channel,
+                config->axis_config[i].zero,
                 config->axis_config[i].max_value);
     }
     for (int i = 0; i < NUM_BUTTONS; ++i)
@@ -73,8 +75,9 @@ void DumpConfig(const char *filename, const struct Configuration *config) {
 int ReadConfig(const char *filename, struct Configuration *config) {
     FILE *in = fopen(filename, "r");
     for (int i = 0; i < NUM_AXIS; ++i) {
-        if (2 != fscanf(in, "A:%d %d\n",
+        if (3 != fscanf(in, "A:%d %d %d\n",
                         &config->axis_config[i].channel,
+                        &config->axis_config[i].zero,
                         &config->axis_config[i].max_value))
             return 0;
     }
@@ -127,15 +130,21 @@ static int WaitForJoystickButton(int fd, int timeout_ms,
     for (;;) {
         struct js_event e;
         timeout_left = WaitForEvent(fd, &e, timeout_left);
-        if (timeout_left <= 0) {
+        if (timeout_left < 0) {
+            perror("Trouble reading joystick. Nastily exiting.");
+            exit(1);
+        }
+        if (timeout_left == 0) {
             return -1;
         }
 
         if (e.type == JS_EVENT_AXIS) {
             for (int a = 0; a < NUM_AXIS; ++a) {
-                if (config->axis_config[a].channel == e.number)
-                    axis->axis[a] = (e.value *
+                if (config->axis_config[a].channel == e.number) {
+                    int normalized = e.value - config->axis_config[a].zero;
+                    axis->axis[a] = (normalized *
                                      1.0 / config->axis_config[a].max_value);
+                }
             }
         } else if (e.type == JS_EVENT_BUTTON) {
             for (int b = 0; b < NUM_BUTTONS; ++b) {
@@ -146,6 +155,12 @@ static int WaitForJoystickButton(int fd, int timeout_ms,
             }
         }
     }
+}
+
+static int64_t GetMillis() {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (int64_t) tv.tv_sec * 1000LL + tv.tv_usec / 1000;
 }
 
 static void DiscardAllInput(int fd, int timeout, char do_echo) {
@@ -187,16 +202,29 @@ static void FindLargestAxis(int js_fd, struct AxisConfig *axis_config) {
     }
 }
 
-static void WaitForReleaseAxis(int js_fd, int channel) {
+static void WaitForReleaseAxis(int js_fd, int channel, int *zero) {
+    int zero_value = 1 << 17;
     struct js_event e;
     for (;;) {
         if (WaitForEvent(js_fd, &e, 1000) <= 0)
             continue;
         if (e.type == JS_EVENT_AXIS && e.number == channel
-            && abs(e.value) < 1000) {
-            return;
+            && abs(e.value) < 5000) {
+            zero_value = e.value;
+            break;
         }
     }
+    // Now, we read the values while they come in, assuming the last one
+    // is the 'zero' position.
+    const int64_t end_time = GetMillis() + 500;
+    while (GetMillis() < end_time) {
+        if (WaitForEvent(js_fd, &e, 1000) <= 0)
+            continue;
+        if (e.type == JS_EVENT_AXIS && e.number == channel) {
+            zero_value = e.value;
+        }
+    }
+    *zero = zero_value;
 }
 
 static void WaitAnyButtonPress(int js_fd, int *button_channel) {
@@ -225,8 +253,8 @@ static void GetAxisConfig(int js_fd,
                           const char *msg, struct AxisConfig *axis_config) {
     fprintf(stderr, "%s", msg); fflush(stderr);
     FindLargestAxis(js_fd, axis_config);
-    fprintf(stderr, "Thanks. Now release.\n");
-    WaitForReleaseAxis(js_fd, axis_config->channel);
+    fprintf(stderr, "Thanks. Nove move to center.\n");
+    WaitForReleaseAxis(js_fd, axis_config->channel, &axis_config->zero);
 }
 
 static void GetButtonConfig(int js_fd, const char *msg, int *channel) {
