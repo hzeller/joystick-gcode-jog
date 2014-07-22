@@ -25,6 +25,7 @@ static const long interval_msec = 20;
 static const long machine_interval_msec = 20;
 
 static int simulate_machine = 0;
+static int quiet = 0;   // quiet - don't print random stuff to screen
 
 // Axes we are interested in.
 enum Axis {
@@ -213,7 +214,7 @@ static void WaitForOk(int fd) {
         if (strncmp(buffer, "ok", 2) == 0) {
             done = 1;
         } else {
-            fprintf(stderr, "SKIP %s", buffer);
+            if (!quiet) fprintf(stderr, "SKIP %s", buffer);
         }
     }
 }
@@ -321,15 +322,15 @@ static int GetCoordinates(struct Vector *pos) {
     DiscardAllInput(STDIN_FILENO, 100, 1);
 
     printf("M114\n"); fflush(stdout);  // read coordinates.
-    fprintf(stderr, "Reading initial absolute position\n");
+    if (!quiet) fprintf(stderr, "Reading initial absolute position\n");
     char buffer[512];
     ReadLine(STDIN_FILENO, buffer, sizeof(buffer), 1);
     if (sscanf(buffer, "X:%f Y:%f Z:%f", &pos->axis[AXIS_X], &pos->axis[AXIS_Y],
                &pos->axis[AXIS_Z]) == 3) {
         WaitForOk(STDIN_FILENO);
-        fprintf(stderr, "Got (x/y/z) = (%.3f/%.3f/%.3f)\n",
-                pos->axis[AXIS_X], pos->axis[AXIS_Y],
-                pos->axis[AXIS_Z]);
+        if (!quiet) fprintf(stderr, "Got (x/y/z) = (%.3f/%.3f/%.3f)\n",
+                            pos->axis[AXIS_X], pos->axis[AXIS_Y],
+                            pos->axis[AXIS_Z]);
         return 1;
     } else {
         fprintf(stderr, "Didn't get readable coordinates.\n");
@@ -366,11 +367,11 @@ int OutputJogGCode(struct Vector *pos, const struct Vector *speed,
         if (pos->axis[a] > limit->axis[a]) pos->axis[a] = limit->axis[a];
     }
     GCodeGoto(pos, feedrate);
-    fprintf(stderr, "Goto (x/y/z) = (%.2f/%.2f/%.2f) "
-            "(joystick:%.1f/%.1f/%.1f) F=%.3f mm/s        \r",
-            pos->axis[AXIS_X], pos->axis[AXIS_Y], pos->axis[AXIS_Z],
-            speed->axis[AXIS_X], speed->axis[AXIS_Y],
-            speed->axis[AXIS_Z], feedrate);
+    if (!quiet) fprintf(stderr, "Goto (x/y/z) = (%.2f/%.2f/%.2f) "
+                        "(joystick:%.1f/%.1f/%.1f) F=%.3f mm/s        \r",
+                        pos->axis[AXIS_X], pos->axis[AXIS_Y], pos->axis[AXIS_Z],
+                        speed->axis[AXIS_X], speed->axis[AXIS_Y],
+                        speed->axis[AXIS_Z], feedrate);
     return 1;
 }
 
@@ -385,20 +386,24 @@ void HandlePlaceMemory(enum Button button, char is_pressed,
     } else {  // we act on release
         if (*accumulated_timeout >= 500) {
             memcpy(storage, machine_pos, sizeof(*storage)); // save
-            fprintf(stderr, "\nStored in %c (%.2f, %.2f, %.2f)\n",
-                    button_letter,
-                    machine_pos->axis[AXIS_X], machine_pos->axis[AXIS_Y],
-                    machine_pos->axis[AXIS_Z]);
+            if (!quiet) fprintf(stderr, "\nStored in %c (%.2f, %.2f, %.2f)\n",
+                                button_letter,
+                                machine_pos->axis[AXIS_X],
+                                machine_pos->axis[AXIS_Y],
+                                machine_pos->axis[AXIS_Z]);
         } else {
             if (storage->axis[AXIS_X] >= 0) {
                 memcpy(machine_pos, storage, sizeof(*storage)); // restore
-                fprintf(stderr, "\nGoto position %c -> (%.2f, %.2f, %.2f)\n",
-                        button_letter,
-                        machine_pos->axis[AXIS_X], machine_pos->axis[AXIS_Y],
-                        machine_pos->axis[AXIS_Z]);
+                if (!quiet) fprintf(stderr,
+                                    "\nGoto position %c -> (%.2f, %.2f, %.2f)\n",
+                                    button_letter,
+                                    machine_pos->axis[AXIS_X],
+                                    machine_pos->axis[AXIS_Y],
+                                    machine_pos->axis[AXIS_Z]);
                 GCodeGoto(machine_pos, max_feedrate_mm_p_sec_xy);
             } else {
-                fprintf(stderr, "\nButton %c undefined\n", button_letter);
+                if (!quiet) fprintf(stderr,
+                                    "\nButton %c undefined\n", button_letter);
             }
         }
         *accumulated_timeout = -1;
@@ -422,9 +427,9 @@ int JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
     // a defined starting way to read the absolute coordinates.
     // Wait until board is initialized. Some Marlin versions dump some
     // stuff out there which we want to ignore.
-    fprintf(stderr, "Init "); fflush(stderr);
+    if (!quiet) fprintf(stderr, "Init "); fflush(stderr);
     if (!simulate_machine) DiscardAllInput(STDIN_FILENO, 5000, 1);
-    fprintf(stderr, "done.\n");
+    if (!quiet) fprintf(stderr, "done.\n");
 
     printf("G21\n"); fflush(stdout); WaitForOk(STDIN_FILENO);  // Switch to metric.
 
@@ -457,7 +462,7 @@ int JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
                     && accumulated_timeout + interval_msec >= 500) {
                     // If the user releases the button now, things will be
                     // stored. Let them know.
-                    fprintf(stderr, "\nStore...");
+                    if (!quiet) fprintf(stderr, "\nStore...");
                 }
                 accumulated_timeout += interval_msec;
             }
@@ -494,6 +499,7 @@ static int usage(const char *progname) {
             "  -j <config>  : Jog machine using config\n"
             "  -h           : Home on startup\n"
             "  -s           : machine not connected; simulate.\n"
+            "  -q           : Quiet. No chatter on stderr.\n"
             "  -L <x,y,z>   : Machine limits in mm\n"
             "  -x <speed>   : feedrate for xy in mm/s\n"
             "  -z <speed>   : feedrate for z in mm/s\n",
@@ -527,7 +533,7 @@ int main(int argc, char **argv) {
     const char *filename = NULL;
 
     int opt;
-    while ((opt = getopt(argc, argv, "C:j:x:z:L:hs")) != -1) {
+    while ((opt = getopt(argc, argv, "C:j:x:z:L:hsq")) != -1) {
         switch (opt) {
         case 'C':
             op = DO_CREATE_CONFIG;
@@ -540,6 +546,10 @@ int main(int argc, char **argv) {
 
         case 's':
             simulate_machine = 1;
+            break;
+
+        case 'q':
+            quiet = 1;
             break;
 
         case 'x':
