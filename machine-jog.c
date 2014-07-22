@@ -27,6 +27,8 @@ static const long machine_interval_msec = 20;
 static int simulate_machine = 0;
 static int quiet = 0;   // quiet - don't print random stuff to screen
 
+static const char *persistent_store = NULL;
+
 // Axes we are interested in.
 enum Axis {
     AXIS_X,
@@ -103,6 +105,34 @@ int ReadConfig(const char *filename, struct Configuration *config) {
     }
     fclose(in);
     return 1;
+}
+
+void StoreSavedPoints(const char *filename, struct SavedPoints *values) {
+    if (filename == NULL) return;
+    FILE *out = fopen(filename, "w");  // Overwriting for now. TODO: tmp file.
+    for (int i = 0; i < NUM_BUTTONS; ++i) {
+        if (i == BUTTON_HOME) continue;
+        fprintf(out, "%.2f %.2f %.2f\n",
+                values->storage[i].axis[AXIS_X],
+                values->storage[i].axis[AXIS_Y],
+                values->storage[i].axis[AXIS_Z]);
+    }
+    fclose(out);
+}
+
+void ReadSavedPoints(const char *filename, struct SavedPoints *values) {
+    if (filename == NULL) return;
+    FILE *in = fopen(filename, "r");
+    if (in == NULL) return;
+    for (int i = 0; i < NUM_BUTTONS; ++i) {
+        if (i == BUTTON_HOME) continue;
+        if (3 != fscanf(in, "%f %f %f\n",
+                        &values->storage[i].axis[AXIS_X],
+                        &values->storage[i].axis[AXIS_Y],
+                        &values->storage[i].axis[AXIS_Z]))
+            break;
+    }
+    fclose(in);
 }
 
 // Wait for input to become ready for read or timeout reached.
@@ -386,6 +416,7 @@ void HandlePlaceMemory(enum Button button, char is_pressed,
     } else {  // we act on release
         if (*accumulated_timeout >= 500) {
             memcpy(storage, machine_pos, sizeof(*storage)); // save
+            StoreSavedPoints(persistent_store, saved);
             if (!quiet) fprintf(stderr, "\nStored in %c (%.2f, %.2f, %.2f)\n",
                                 button_letter,
                                 machine_pos->axis[AXIS_X],
@@ -422,6 +453,7 @@ int JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
     memset(&saved, 0, sizeof(saved));
     for (int i = 0; i < NUM_BUTTONS; ++i)
         saved.storage[i].axis[AXIS_X] = -1;
+    ReadSavedPoints(persistent_store, &saved);
 
     // Skip initial stuff coming from the machine. We need to have
     // a defined starting way to read the absolute coordinates.
@@ -498,11 +530,12 @@ static int usage(const char *progname) {
             "  -C <config>  : Create a configuration file for Joystick\n"
             "  -j <config>  : Jog machine using config\n"
             "  -h           : Home on startup\n"
-            "  -s           : machine not connected; simulate.\n"
-            "  -q           : Quiet. No chatter on stderr.\n"
+            "  -p <persist-file> : persist saved points in given file\n"
             "  -L <x,y,z>   : Machine limits in mm\n"
             "  -x <speed>   : feedrate for xy in mm/s\n"
-            "  -z <speed>   : feedrate for z in mm/s\n",
+            "  -z <speed>   : feedrate for z in mm/s\n"
+            "  -s           : machine not connected; simulate.\n"
+            "  -q           : Quiet. No chatter on stderr.\n",
             progname);
     return 1;
 }
@@ -533,7 +566,7 @@ int main(int argc, char **argv) {
     const char *filename = NULL;
 
     int opt;
-    while ((opt = getopt(argc, argv, "C:j:x:z:L:hsq")) != -1) {
+    while ((opt = getopt(argc, argv, "C:j:x:z:L:hsp:")) != -1) {
         switch (opt) {
         case 'C':
             op = DO_CREATE_CONFIG;
@@ -550,6 +583,10 @@ int main(int argc, char **argv) {
 
         case 'q':
             quiet = 1;
+            break;
+
+        case 'p':
+            persistent_store = strdup(optarg);
             break;
 
         case 'x':
