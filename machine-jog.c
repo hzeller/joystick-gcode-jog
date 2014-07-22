@@ -14,10 +14,8 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#define WAIT_FOR_OK_FOR_MOVE 1
-
 static const int kMaxFeedrate_xy = 120;
-static const int kMaxFeedrate_z = 1;  // Z is typically pretty slow
+static const int kMaxFeedrate_z = 10;  // Z is typically pretty slow
 
 static int max_feedrate_mm_p_sec_xy;
 static int max_feedrate_mm_p_sec_z;
@@ -25,6 +23,8 @@ static int max_feedrate_mm_p_sec_z;
 static const long interval_msec = 20;
 
 static const long machine_interval_msec = 20;
+
+static int simulate_machine = 0;
 
 // Axes we are interested in.
 enum Axis {
@@ -68,6 +68,10 @@ struct SavedPoints {
     struct Vector c;
     struct Vector d;
 };
+
+static int quantize(int value, int q) {
+    return value / q * q;
+}
 
 void DumpConfig(const char *filename, const struct Configuration *config) {
     FILE *out = fopen(filename, "w");
@@ -154,7 +158,8 @@ static int WaitForJoystickButton(int fd, int timeout_ms,
             for (int a = 0; a < NUM_AXIS; ++a) {
                 if (config->axis_config[a].channel == e.number) {
                     int normalized = e.value - config->axis_config[a].zero;
-                    axis->axis[a] = (normalized *
+                    int quant = abs(config->axis_config[a].max_value / 16);
+                    axis->axis[a] = (quantize(normalized, quant) *
                                      1.0 / config->axis_config[a].max_value);
                 }
             }
@@ -200,6 +205,7 @@ static int ReadLine(int fd, char *result, int len,
 
 // Ok comes on a single line.
 static void WaitForOk(int fd) {
+    if (simulate_machine) return;
     char buffer[512];
     char done = 0;
     while (!done) {
@@ -313,6 +319,7 @@ static int CreateConfig(int js_fd, struct Configuration *config) {
 
 // Read coordinates from printer.
 static int GetCoordinates(struct Vector *pos) {
+    if (simulate_machine) return 1;
     DiscardAllInput(STDIN_FILENO, 100, 1);
 
     printf("M114\n"); fflush(stdout);  // read coordinates.
@@ -333,13 +340,11 @@ static int GetCoordinates(struct Vector *pos) {
 }
 
 void GCodeGoto(struct Vector *pos, float feedrate_mm_sec) {
+    if (simulate_machine) return;
     printf("G1 X%.3f Y%.3f Z%.3f F%.3f\n", pos->axis[AXIS_X], pos->axis[AXIS_Y],
            pos->axis[AXIS_Z], feedrate_mm_sec * 60);
     fflush(stdout);
-#if WAIT_FOR_OK_FOR_MOVE
-    // This slows things down, but looks like this is
     WaitForOk(STDIN_FILENO);
-#endif
 }
 
 // Returns 1 if any gcode has been output or 0 if there was no need.
@@ -363,8 +368,8 @@ int OutputJogGCode(struct Vector *pos, const struct Vector *speed,
         if (pos->axis[a] > limit->axis[a]) pos->axis[a] = limit->axis[a];
     }
     GCodeGoto(pos, feedrate);
-    fprintf(stderr, "Goto (x/y/z) = (%.3f/%.3f/%.3f) "
-            "(js:%.1f/%.1f/%.1f) F=%.3f mm/s\n",
+    fprintf(stderr, "Goto (x/y/z) = (%.2f/%.2f/%.2f) "
+            "(joystick:%.1f/%.1f/%.1f) F=%.3f mm/s        \r",
             pos->axis[AXIS_X], pos->axis[AXIS_Y], pos->axis[AXIS_Z],
             speed->axis[AXIS_X], speed->axis[AXIS_Y],
             speed->axis[AXIS_Z], feedrate);
@@ -403,7 +408,7 @@ int JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
     // Wait until board is initialized. Some Marlin versions dump some
     // stuff out there which we want to ignore.
     fprintf(stderr, "Init "); fflush(stderr);
-    DiscardAllInput(STDIN_FILENO, 5000, 1);
+    if (!simulate_machine) DiscardAllInput(STDIN_FILENO, 5000, 1);
     fprintf(stderr, "done.\n");
 
     printf("G21\n"); fflush(stdout); WaitForOk(STDIN_FILENO);  // Switch to metric.
@@ -479,6 +484,7 @@ static int usage(const char *progname) {
             "  -C <config>  : Create a configuration file for Joystick\n"
             "  -j <config>  : Jog machine using config\n"
             "  -h           : Home on startup\n"
+            "  -s           : machine not connected; simulate.\n"
             "  -L <x,y,z>   : Machine limits in mm\n"
             "  -x <speed>   : feedrate for xy in mm/s\n"
             "  -z <speed>   : feedrate for z in mm/s\n",
@@ -512,7 +518,7 @@ int main(int argc, char **argv) {
     const char *filename = NULL;
 
     int opt;
-    while ((opt = getopt(argc, argv, "C:j:x:z:L:h")) != -1) {
+    while ((opt = getopt(argc, argv, "C:j:x:z:L:hs")) != -1) {
         switch (opt) {
         case 'C':
             op = DO_CREATE_CONFIG;
@@ -521,6 +527,10 @@ int main(int argc, char **argv) {
 
         case 'h':
             do_homing = 1;
+            break;
+
+        case 's':
+            simulate_machine = 1;
             break;
 
         case 'x':
