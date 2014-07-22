@@ -384,7 +384,7 @@ void HandlePlaceMemory(enum Button button, char is_pressed,
     if (is_pressed) {
         *accumulated_timeout = 0;
     } else {  // we act on release
-        if (*accumulated_timeout > 500) {
+        if (*accumulated_timeout >= 500) {
             memcpy(storage, machine_pos, sizeof(*storage)); // save
             fprintf(stderr, "\nStored in %c (%.2f, %.2f, %.2f)\n",
                     button_letter,
@@ -402,6 +402,7 @@ void HandlePlaceMemory(enum Button button, char is_pressed,
                 fprintf(stderr, "\nButton %c undefined\n", button_letter);
             }
         }
+        *accumulated_timeout = -1;
     }
 }
 
@@ -446,13 +447,21 @@ int JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
     if (!GetCoordinates(&machine_pos))
         return 1;
 
-    int accumulated_timeout;
+    int accumulated_timeout = -1;
 
     for (;;) {
         switch (WaitForJoystickButton(js_fd, interval_msec,
                                       config, &speed_vector, &buttons)) {
         case -1:  // timeout, i.e. our regular update interval.
-            accumulated_timeout += interval_msec;
+            if (accumulated_timeout >= 0) {
+                if (accumulated_timeout < 500
+                    && accumulated_timeout + interval_msec >= 500) {
+                    // If the user releases the button now, things will be
+                    // stored. Let them know.
+                    fprintf(stderr, "\nStore...");
+                }
+                accumulated_timeout += interval_msec;
+            }
             if (OutputJogGCode(&machine_pos, &speed_vector, machine_limit)) {
                 // We did emit some gcode. Now we're not homed anymore
                 is_homed = 0;
