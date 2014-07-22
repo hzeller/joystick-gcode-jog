@@ -380,14 +380,27 @@ void HandlePlaceMemory(enum Button button, char is_pressed,
                        struct Vector *storage,
                        int *accumulated_timeout,
                        struct Vector *machine_pos) {
+    const char button_letter = 'A' + (button - BUTTON_STORE_A);
     if (is_pressed) {
         *accumulated_timeout = 0;
     } else {  // we act on release
         if (*accumulated_timeout > 500) {
             memcpy(storage, machine_pos, sizeof(*storage)); // save
+            fprintf(stderr, "\nStored in %c (%.2f, %.2f, %.2f)\n",
+                    button_letter,
+                    machine_pos->axis[AXIS_X], machine_pos->axis[AXIS_Y],
+                    machine_pos->axis[AXIS_Z]);
         } else {
-            memcpy(machine_pos, storage, sizeof(*storage)); // restore
-            GCodeGoto(machine_pos, max_feedrate_mm_p_sec_xy);
+            if (storage->axis[AXIS_X] >= 0) {
+                memcpy(machine_pos, storage, sizeof(*storage)); // restore
+                fprintf(stderr, "\nGoto position %c -> (%.2f, %.2f, %.2f)\n",
+                        button_letter,
+                        machine_pos->axis[AXIS_X], machine_pos->axis[AXIS_Y],
+                        machine_pos->axis[AXIS_Z]);
+                GCodeGoto(machine_pos, max_feedrate_mm_p_sec_xy);
+            } else {
+                fprintf(stderr, "\nButton %c undefined\n", button_letter);
+            }
         }
     }
 }
@@ -402,7 +415,10 @@ int JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
     memset(&machine_pos, 0, sizeof(machine_pos));
     memset(&buttons, 0, sizeof(buttons));
     memset(&saved, 0, sizeof(saved));
-
+    saved.a.axis[AXIS_X] = -1;
+    saved.b.axis[AXIS_X] = -1;
+    saved.c.axis[AXIS_X] = -1;
+    saved.d.axis[AXIS_X] = -1;
     // Skip initial stuff coming from the machine. We need to have
     // a defined starting way to read the absolute coordinates.
     // Wait until board is initialized. Some Marlin versions dump some
