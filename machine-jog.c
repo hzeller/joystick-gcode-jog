@@ -41,6 +41,8 @@ enum Button {
     BUTTON_STORE_B,
     BUTTON_STORE_C,
     BUTTON_STORE_D,
+    BUTTON_STORE_E,
+    BUTTON_STORE_F,
     NUM_BUTTONS
 };
 
@@ -63,10 +65,7 @@ struct Configuration {
 };
 
 struct SavedPoints {
-    struct Vector a;
-    struct Vector b;
-    struct Vector c;
-    struct Vector d;
+    struct Vector storage[NUM_BUTTONS];
 };
 
 static int quantize(int value, int q) {
@@ -306,14 +305,13 @@ static int CreateConfig(int js_fd, struct Configuration *config) {
                   &config->axis_config[AXIS_Z]);
     GetButtonConfig(js_fd,
                     "Press HOME button.", &config->button_channel[BUTTON_HOME]);
-    GetButtonConfig(js_fd, "Press Memory A button.",
-                    &config->button_channel[BUTTON_STORE_A]);
-    GetButtonConfig(js_fd, "Press Memory B button.",
-                    &config->button_channel[BUTTON_STORE_B]);
-    GetButtonConfig(js_fd, "Press Memory C button.",
-                    &config->button_channel[BUTTON_STORE_C]);
-    GetButtonConfig(js_fd, "Press Memory D button.",
-                    &config->button_channel[BUTTON_STORE_D]);
+    for (int i = 0; i < NUM_BUTTONS; ++i) {
+        if (i == BUTTON_HOME) continue;
+        char buffer[512];
+        snprintf(buffer, sizeof(buffer),
+                 "Press Memory %c button.", 'A' + (i - BUTTON_STORE_A));
+        GetButtonConfig(js_fd, buffer, &config->button_channel[i]);
+    }
     return 1;
 }
 
@@ -377,10 +375,11 @@ int OutputJogGCode(struct Vector *pos, const struct Vector *speed,
 }
 
 void HandlePlaceMemory(enum Button button, char is_pressed,
-                       struct Vector *storage,
+                       struct SavedPoints *saved,
                        int *accumulated_timeout,
                        struct Vector *machine_pos) {
     const char button_letter = 'A' + (button - BUTTON_STORE_A);
+    struct Vector *storage = &saved->storage[button];
     if (is_pressed) {
         *accumulated_timeout = 0;
     } else {  // we act on release
@@ -416,10 +415,9 @@ int JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
     memset(&machine_pos, 0, sizeof(machine_pos));
     memset(&buttons, 0, sizeof(buttons));
     memset(&saved, 0, sizeof(saved));
-    saved.a.axis[AXIS_X] = -1;
-    saved.b.axis[AXIS_X] = -1;
-    saved.c.axis[AXIS_X] = -1;
-    saved.d.axis[AXIS_X] = -1;
+    for (int i = 0; i < NUM_BUTTONS; ++i)
+        saved.storage[i].axis[AXIS_X] = -1;
+
     // Skip initial stuff coming from the machine. We need to have
     // a defined starting way to read the absolute coordinates.
     // Wait until board is initialized. Some Marlin versions dump some
@@ -450,8 +448,9 @@ int JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
     int accumulated_timeout = -1;
 
     for (;;) {
-        switch (WaitForJoystickButton(js_fd, interval_msec,
-                                      config, &speed_vector, &buttons)) {
+        int button_ev = WaitForJoystickButton(js_fd, interval_msec,
+                                              config, &speed_vector, &buttons);
+        switch (button_ev) {
         case -1:  // timeout, i.e. our regular update interval.
             if (accumulated_timeout >= 0) {
                 if (accumulated_timeout < 500
@@ -471,26 +470,6 @@ int JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
             }
             break;
 
-        case BUTTON_STORE_A:
-            HandlePlaceMemory(BUTTON_STORE_A, buttons.button[BUTTON_STORE_A],
-                              &saved.a, &accumulated_timeout, &machine_pos);
-            break;
-
-        case BUTTON_STORE_B:
-            HandlePlaceMemory(BUTTON_STORE_B, buttons.button[BUTTON_STORE_B],
-                              &saved.b, &accumulated_timeout, &machine_pos);
-            break;
-
-        case BUTTON_STORE_C:
-            HandlePlaceMemory(BUTTON_STORE_C, buttons.button[BUTTON_STORE_C],
-                              &saved.c, &accumulated_timeout, &machine_pos);
-            break;
-
-        case BUTTON_STORE_D:
-            HandlePlaceMemory(BUTTON_STORE_D, buttons.button[BUTTON_STORE_D],
-                              &saved.d, &accumulated_timeout, &machine_pos);
-            break;
-
         case BUTTON_HOME:  // only home if not already.
             if (buttons.button[BUTTON_HOME] && !is_homed) {
                 is_homed = 1;
@@ -499,6 +478,11 @@ int JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
                 if (!GetCoordinates(&machine_pos))
                     return 1;
             }
+            break;
+
+        default:
+            HandlePlaceMemory(button_ev, buttons.button[button_ev],
+                              &saved, &accumulated_timeout, &machine_pos);
             break;
         }
     }
@@ -602,7 +586,8 @@ int main(int argc, char **argv) {
         
     case DO_JOG:
         if (ReadConfig(filename, &config) == 0) {
-            fprintf(stderr, "Problem reading config file\n");
+            fprintf(stderr, "Problem reading joystick config file.\n"
+                    "Create a fresh one with -C %s\n", filename);
             return 1;
         }
         JogMachine(js_fd, do_homing, &machine_limits, &config);
