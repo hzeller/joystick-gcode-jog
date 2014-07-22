@@ -343,7 +343,8 @@ void GCodeGoto(struct Vector *pos, float feedrate_mm_sec) {
 }
 
 // Returns 1 if any gcode has been output or 0 if there was no need.
-int OutputJogGCode(struct Vector *pos, const struct Vector *speed) {
+int OutputJogGCode(struct Vector *pos, const struct Vector *speed,
+                   const struct Vector *limit) {
     // We get the timeout in regular intervals.
     const float euklid = sqrtf(speed->axis[AXIS_X] * speed->axis[AXIS_X]
                                 + speed->axis[AXIS_Y] * speed->axis[AXIS_Y]
@@ -359,6 +360,7 @@ int OutputJogGCode(struct Vector *pos, const struct Vector *speed) {
     for (int a = AXIS_X; a < NUM_AXIS; ++a) {
         pos->axis[a] = pos->axis[a] + speed->axis[a] * feedrate * interval;
         if (pos->axis[a] < 0) pos->axis[a] = 0;
+        if (pos->axis[a] > limit->axis[a]) pos->axis[a] = limit->axis[a];
     }
     GCodeGoto(pos, feedrate);
     fprintf(stderr, "Goto (x/y/z) = (%.3f/%.3f/%.3f) "
@@ -385,7 +387,8 @@ void HandlePlaceMemory(enum Button button, char is_pressed,
     }
 }
 
-int JogMachine(int js_fd, char do_homing, const struct Configuration *config) {
+int JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
+               const struct Configuration *config) {
     struct Vector speed_vector;
     struct Vector machine_pos;
     struct ButtonState buttons;
@@ -429,7 +432,7 @@ int JogMachine(int js_fd, char do_homing, const struct Configuration *config) {
                                       config, &speed_vector, &buttons)) {
         case -1:  // timeout, i.e. our regular update interval.
             accumulated_timeout += interval_msec;
-            if (OutputJogGCode(&machine_pos, &speed_vector)) {
+            if (OutputJogGCode(&machine_pos, &speed_vector, machine_limit)) {
                 // We did emit some gcode. Now we're not homed anymore
                 is_homed = 0;
             } else {
@@ -476,6 +479,7 @@ static int usage(const char *progname) {
             "  -C <config>  : Create a configuration file for Joystick\n"
             "  -j <config>  : Jog machine using config\n"
             "  -h           : Home on startup\n"
+            "  -L <x,y,z>   : Machine limits in mm\n"
             "  -x <speed>   : feedrate for xy in mm/s\n"
             "  -z <speed>   : feedrate for z in mm/s\n",
             progname);
@@ -488,6 +492,10 @@ int main(int argc, char **argv) {
     char do_homing = 0;
     struct Configuration config;
     memset(&config, 0, sizeof(config));
+    struct Vector machine_limits;
+    machine_limits.axis[AXIS_X]
+        = machine_limits.axis[AXIS_Y]
+        = machine_limits.axis[AXIS_Z] = 305;
 
     // The Joystick.
     const int js_fd = open("/dev/input/js0", O_RDONLY);
@@ -504,7 +512,7 @@ int main(int argc, char **argv) {
     const char *filename = NULL;
 
     int opt;
-    while ((opt = getopt(argc, argv, "C:j:x:z:h")) != -1) {
+    while ((opt = getopt(argc, argv, "C:j:x:z:L:h")) != -1) {
         switch (opt) {
         case 'C':
             op = DO_CREATE_CONFIG;
@@ -522,6 +530,14 @@ int main(int argc, char **argv) {
                         max_feedrate_mm_p_sec_xy);
                 return usage(argv[0]);
             }
+            break;
+
+        case 'L':
+            if (3 != sscanf(optarg, "%f,%f,%f",
+                            &machine_limits.axis[AXIS_X],
+                            &machine_limits.axis[AXIS_Z],
+                            &machine_limits.axis[AXIS_Z]))
+                return usage(argv[0]);
             break;
 
         case 'z':
@@ -554,7 +570,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "Problem reading config file\n");
             return 1;
         }
-        JogMachine(js_fd, do_homing, &config);
+        JogMachine(js_fd, do_homing, &machine_limits, &config);
         break;
 
     case DO_NOTHING:
