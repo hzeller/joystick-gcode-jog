@@ -71,9 +71,9 @@ static void WaitForReleaseAxis(int js_fd, int channel, int *zero) {
     }
     // Now, we read the values while they come in, assuming the last one
     // is the 'zero' position.
-    const int64_t end_time = GetMillis() + 500;
+    const int64_t end_time = GetMillis() + 100;
     while (GetMillis() < end_time) {
-        if (JoystickWaitForEvent(js_fd, &e, 1000) <= 0)
+        if (JoystickWaitForEvent(js_fd, &e, 100) <= 0)
             continue;
         if (e.type == JS_EVENT_AXIS && e.number == channel) {
             zero_value = e.value;

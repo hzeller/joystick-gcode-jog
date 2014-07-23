@@ -124,6 +124,25 @@ int JoystickWaitForEvent(int fd, struct js_event *event, int timeout_ms) {
     return timeout_left;
 }
 
+static void JoystickInitialState(int js_fd, struct Configuration *config) {
+    struct js_event e;
+    // The initial state is sent on connect.
+    while (JoystickWaitForEvent(js_fd, &e, 50) > 0) {
+        if ((e.type & JS_EVENT_INIT) == 0)
+            break;  // done init events.
+        if ((e.type & JS_EVENT_AXIS) != 0) {
+            // read zero position.
+            for (int a = 0; a < NUM_AXIS; ++a) {
+                if (config->axis_config[a].channel == e.number) {
+                    config->axis_config[a].zero = e.value;
+                    if (!quiet) fprintf(stderr, "Zero axis %d : %d\n",
+                                        a, e.value);
+                }
+            }
+        }
+    }
+}
+
 // Wait for a joystick button up to "timeout_ms" long. Returns negative
 // value on timeout or the button-id when a button event happened.
 // In case the axis position is changing, it updates "axis", but does not
@@ -479,6 +498,7 @@ int main(int argc, char **argv) {
                     "Create a fresh one with -C %s\n", filename);
             return 1;
         }
+        JoystickInitialState(js_fd, &config);
         JogMachine(js_fd, do_homing, &machine_limits, &config);
         break;
 
