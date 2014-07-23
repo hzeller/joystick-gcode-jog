@@ -43,14 +43,18 @@ you can use `socat` to wire it up:
 
 This tells `socat` to execute the `machine-jog` binary with the joystick
 configuration and connect its stdin/stdout to the `/dev/ttyACM0` terminal
-with a bitrate of 230400.
+with a bitrate of 230400. If you use BeagleG, then you'd connect it to the
+TCP socket.
 
-In another program that has has a connection open to the printer, this can
-start the machine-jog program in a sub-process and send everything from the
-stdout stream to the printer and back from the printer into stdin of the process.
-(This would be awesome in OctoPrint; if it sees `/dev/input/js0` to exist, it can
-start `machine-jog` in a sub-process and connect the streams when in the
-control panel).
+The typical use case, however, is to use `machine-jog` from within
+another program that already has the serial line open and 'owns' it.
+In this case, that program would start `machine-jog` in a sub-process
+and send everything from its `stdout` stream to the printer and back from
+the printer into `stdin` of the process.
+(This would be awesome in [OctoPrint](http://octoprint.org); if it
+sees `/dev/input/js0` to exist, it could `subprocess.call(...)` `machine-jog`
+and connect the streams when the user is in the control panel. Should
+be fairly easy to add for someone who knows Python...)
 
 Use
 ---
