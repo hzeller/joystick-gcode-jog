@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/select.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -188,6 +189,8 @@ static int JoystickWaitForButton(int fd, int timeout_ms,
     }
 }
 
+// Discard all input until nothing is coming anymore within timeout. In
+// particular on first connect, this helps us to get into a clean state.
 static void DiscardAllInput(int timeout) {
     if (simulate_machine) return;
     char buf[128];
@@ -201,18 +204,15 @@ static void DiscardAllInput(int timeout) {
     }
 }
 
-// Ok comes on a single line.
+// 'ok' comes on a single line, maybe followed by something.
 static void WaitForOk() {
     if (simulate_machine) return;
-    const int fd = gcode_in_fd;
     char buffer[512];
-    char done = 0;
-    while (!done) {
-        if (ReadLine(fd, buffer, sizeof(buffer), 0) < 0)
+    for (;;) {
+        if (ReadLine(gcode_in_fd, buffer, sizeof(buffer), 0) < 0)
             break;
-        if (strncmp(buffer, "ok", 2) == 0) {
-            done = 1;
-        }
+        if (strncasecmp(buffer, "ok", 2) == 0)
+            break;
     }
 }
 
@@ -392,7 +392,6 @@ void JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
             break;
         }
     }
-    fprintf(gcode_out, "M84\n"); WaitForOk();
 }
 
 static int usage(const char *progname) {

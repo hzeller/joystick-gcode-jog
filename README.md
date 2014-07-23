@@ -49,7 +49,8 @@ In another program that has has a connection open to the printer, this can
 start the machine-jog program in a sub-process and send everything from the
 stdout stream to the printer and back from the printer into stdin of the process.
 (This would be awesome in OctoPrint; if it sees `/dev/input/js0` to exist, it can
-start machine-jog in a sub-process and connect the streams).
+start `machine-jog` in a sub-process and connect the streams when in the
+control panel).
 
 Use
 ---
