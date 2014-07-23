@@ -407,7 +407,10 @@ int main(int argc, char **argv) {
         = machine_limits.axis[AXIS_Y]
         = machine_limits.axis[AXIS_Z] = 305;
 
-    // The Joystick.
+    // The Joystick. The first time we open it, the zero values are not
+    // yet properly established. So let's close the first instance right awawy
+    // and use the next open :)
+    close(open("/dev/input/js0", O_RDONLY));
     const int js_fd = open("/dev/input/js0", O_RDONLY);
     if (js_fd < 0) {
         perror("Opening joystick");
