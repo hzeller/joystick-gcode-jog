@@ -416,25 +416,6 @@ int main(int argc, char **argv) {
         = machine_limits.axis[AXIS_Y]
         = machine_limits.axis[AXIS_Z] = 305;
 
-    // The Joystick. The first time we open it, the zero values are not
-    // yet properly established. So let's close the first instance right awawy
-    // and use the next open :)
-    close(open("/dev/input/js0", O_RDONLY));
-    const int js_fd = open("/dev/input/js0", O_RDONLY);
-    if (js_fd < 0) {
-        perror("Opening joystick");
-        return 1;
-    }
-
-    char joystick_name[512];
-    if (ioctl(js_fd, JSIOCGNAME(sizeof(joystick_name)), joystick_name) < 0)
-        strncpy(joystick_name, "unknown-joystick", sizeof(joystick_name));
-    // Make a filename-friendly name out of it.
-    for (char *x = joystick_name; *x; ++x) {
-        if (isspace(*x)) *x = '-';
-    }
-    printf("Joystick-Name: %s\n", joystick_name);
-
     enum Operation {
         DO_NOTHING,
         DO_CREATE_CONFIG,
@@ -502,6 +483,9 @@ int main(int argc, char **argv) {
         }
     }
 
+    if (op == DO_NOTHING)
+        return usage(argv[0]);
+
     // Connection to the machine reading gcode. TODO: maybe provide
     // listening on a socket ?
     gcode_out = stdout;
@@ -512,13 +496,29 @@ int main(int argc, char **argv) {
     // immediately.
     setvbuf(stderr, NULL, _IONBF, 0);
 
-    switch (op) {
-    case DO_CREATE_CONFIG:
+    // The Joystick. The first time we open it, the zero values are not
+    // yet properly established. So let's close the first instance right awawy
+    // and use the next open :)
+    close(open("/dev/input/js0", O_RDONLY));
+    const int js_fd = open("/dev/input/js0", O_RDONLY);
+    if (js_fd < 0) {
+        perror("Opening joystick");
+        return 1;
+    }
+
+    char joystick_name[512];
+    if (ioctl(js_fd, JSIOCGNAME(sizeof(joystick_name)), joystick_name) < 0)
+        strncpy(joystick_name, "unknown-joystick", sizeof(joystick_name));
+    // Make a filename-friendly name out of it.
+    for (char *x = joystick_name; *x; ++x) {
+        if (isspace(*x)) *x = '-';
+    }
+    printf("Joystick-Name: %s\n", joystick_name);
+
+    if (op == DO_CREATE_CONFIG) {
         CreateConfig(js_fd, &config);
         WriteConfig(config_dir, joystick_name, &config);
-        break;
-        
-    case DO_JOG:
+    } else if (op == DO_JOG) {
         if (ReadConfig(config_dir, joystick_name, &config) == 0) {
             fprintf(stderr, "Problem reading joystick config file.\n"
                     "Create a fresh one with\n\t%s -C %s\n", argv[0], config_dir);
@@ -526,10 +526,7 @@ int main(int argc, char **argv) {
         }
         JoystickInitialState(js_fd, &config);
         JogMachine(js_fd, do_homing, &machine_limits, &config);
-        break;
-
-    case DO_NOTHING:
-        return usage(argv[0]);
     }
+
     return 0;
 }
