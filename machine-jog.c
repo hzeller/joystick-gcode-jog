@@ -240,11 +240,8 @@ int OutputJogGCode(struct Vector *pos, const struct Vector *speed,
         if (pos->axis[a] > limit->axis[a]) pos->axis[a] = limit->axis[a];
     }
     GCodeGoto(pos, feedrate);
-    if (!quiet) fprintf(stderr, "Goto (x/y/z) = (%.2f/%.2f/%.2f) "
-                        "(joystick:%.1f/%.1f/%.1f) F=%.3f mm/s        \r",
-                        pos->axis[AXIS_X], pos->axis[AXIS_Y], pos->axis[AXIS_Z],
-                        speed->axis[AXIS_X], speed->axis[AXIS_Y],
-                        speed->axis[AXIS_Z], feedrate);
+    if (!quiet) fprintf(stderr, "Goto (x/y/z) = (%.2f/%.2f/%.2f)      \r",
+                        pos->axis[AXIS_X], pos->axis[AXIS_Y], pos->axis[AXIS_Z]);
     return 1;
 }
 
