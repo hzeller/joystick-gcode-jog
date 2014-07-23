@@ -17,8 +17,10 @@ Options
 Joystick Configuration
 ----------------------
 
-First, create a configuration for your specific joystick. This will ask you
-to move the joystick to get the right axis and button mapping:
+First, create a configuration for your specific joystick. Since each joystick
+has its own mapping of axis and buttons, we need to first tell machine-jog
+where these are.
+This will ask you to move the joystick to get the right axis and button mapping:
 
     mkdir js-conf
     ./machine-jog -C js-conf/
@@ -31,6 +33,10 @@ The configuration asks you to move the X,Y,Z to their extreme values to learn
 which is your preferred axis. Also it asks you for a 'home' button, which
 is used to home the machine and six additional buttons that you can use to
 store and retrieve 'waypoints'.
+
+Typically all USB gamepads either for PS3 or Xbox should work. On my beaglebone
+I found that the xpad kernel module was missing, so only a PS3 gamepad worked right
+out of the box. On my regular Linux notebook, both types worked right away.
 
 Wire Up
 -------
@@ -46,15 +52,18 @@ configuration and connect its stdin/stdout to the `/dev/ttyACM0` terminal
 with a bitrate of 230400. If you use BeagleG, then you'd connect it to the
 TCP socket.
 
-The typical use case, however, is to use `machine-jog` from within
+This could be automatically started in a udev-rule for instance.
+
+The typical use-case, however, is to use `machine-jog` from within
 another program that already has the serial line open and 'owns' it.
 In this case, that program would start `machine-jog` in a sub-process
 and send everything from its `stdout` stream to the printer and back from
-the printer into `stdin` of the process.
+the printer into `stdin` of the process. Make sure to not do any buffering.
 (This would be awesome in [OctoPrint](http://octoprint.org); if it
 sees `/dev/input/js0` to exist, it could `subprocess.call(...)` `machine-jog`
-and connect the streams when the user is in the control panel. Should
-be fairly easy to add for someone who knows Python...)
+and connect the streams when the user is in the control panel, so that
+both, the manual jogging buttons and the joystick works.
+Should be fairly easy to add for someone who knows Python...)
 
 Use
 ---
