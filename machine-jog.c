@@ -17,17 +17,22 @@
 static const int kMaxFeedrate_xy = 120;
 static const int kMaxFeedrate_z = 10;  // Z is typically pretty slow
 
+// Some global state.
 static int max_feedrate_mm_p_sec_xy;
 static int max_feedrate_mm_p_sec_z;
 
-static const long interval_msec = 20;
-
+static const long interval_msec = 20;   // update interval between reads.
 static const long machine_interval_msec = 20;
 
+// Flags.
 static int simulate_machine = 0;
 static int quiet = 0;   // quiet - don't print random stuff to screen
 
-static const char *persistent_store = NULL;
+static const char *persistent_store = NULL;  // filename to store memory points.
+
+// Streams to connect machine to.
+static FILE *gcode_out = NULL;          // we write with fprintf() etc.
+static int gcode_in_fd = STDIN_FILENO;  // .. and read directly from file desc.
 
 // Axes we are interested in.
 enum Axis {
@@ -75,7 +80,7 @@ static int quantize(int value, int q) {
     return value / q * q;
 }
 
-void DumpConfig(const char *filename, const struct Configuration *config) {
+void WriteConfig(const char *filename, const struct Configuration *config) {
     FILE *out = fopen(filename, "w");
     if (out == NULL) return;
     for (int i = 0; i < NUM_AXIS; ++i) {
@@ -107,7 +112,7 @@ int ReadConfig(const char *filename, struct Configuration *config) {
     return 1;
 }
 
-void StoreSavedPoints(const char *filename, struct SavedPoints *values) {
+void WriteSavedPoints(const char *filename, struct SavedPoints *values) {
     if (filename == NULL) return;
     FILE *out = fopen(filename, "w");  // Overwriting for now. TODO: tmp file.
     for (int i = 0; i < NUM_BUTTONS; ++i) {
@@ -135,11 +140,18 @@ void ReadSavedPoints(const char *filename, struct SavedPoints *values) {
     fclose(in);
 }
 
+static int64_t GetMillis() {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (int64_t) tv.tv_sec * 1000LL + tv.tv_usec / 1000;
+}
+
 // Wait for input to become ready for read or timeout reached.
-// If the file-descriptor becomes readable, returns number of millis
-// left. Returns 0 on timeout (i.e. nothing to be read).
-// Returns -1
-static int ReadWait(int fd, int timeout_millis) {
+// If the file-descriptor becomes readable, returns number of milli-seconds
+// left.
+// Returns 0 on timeout (i.e. no millis left and nothing to be read).
+// Returns -1 on error.
+static int AwaitReadReady(int fd, int timeout_millis) {
     fd_set read_fds;
     FD_ZERO(&read_fds);
     FD_SET(fd, &read_fds);
@@ -155,9 +167,23 @@ static int ReadWait(int fd, int timeout_millis) {
     return tv.tv_usec / 1000;
 }
 
+static int ReadLine(int fd, char *result, int len, char do_echo) {
+    int bytes_read = 0;
+    char c = 0;
+    while (c != '\n' && c != '\r' && bytes_read < len) {
+        if (read(fd, &c, 1) < 0)
+            return -1;
+        ++bytes_read;
+        *result++ = c;
+        if (do_echo && !quiet) write(STDERR_FILENO, &c, 1);  // echo back.
+    }
+    *result = '\0';
+    return bytes_read;
+}
+
 // Returns 0 on timeout, -1 on error and a positive number on event.
-static int WaitForEvent(int fd, struct js_event *event, int timeout_ms) {
-    int timeout_left = ReadWait(fd, timeout_ms);
+static int JoystickWaitForEvent(int fd, struct js_event *event, int timeout_ms) {
+    const int timeout_left = AwaitReadReady(fd, timeout_ms);
     if (timeout_left > 0) {
         read(fd, event, sizeof(*event));
     }
@@ -168,14 +194,14 @@ static int WaitForEvent(int fd, struct js_event *event, int timeout_ms) {
 // value on timeout or the button-id when a button event happened.
 // In case the axis position is changing, it updates "axis", but does not
 // return before the timeout, as this does not require immediate attention.
-static int WaitForJoystickButton(int fd, int timeout_ms,
+static int JoystickWaitForButton(int fd, int timeout_ms,
                                  const struct Configuration *config,
                                  struct Vector *axis,
                                  struct ButtonState *button) {
     int timeout_left = timeout_ms;
     for (;;) {
         struct js_event e;
-        timeout_left = WaitForEvent(fd, &e, timeout_left);
+        timeout_left = JoystickWaitForEvent(fd, &e, timeout_left);
         if (timeout_left < 0) {
             perror("Trouble reading joystick. Nastily exiting.");
             exit(1);
@@ -204,38 +230,19 @@ static int WaitForJoystickButton(int fd, int timeout_ms,
     }
 }
 
-static int64_t GetMillis() {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return (int64_t) tv.tv_sec * 1000LL + tv.tv_usec / 1000;
-}
-
-static void DiscardAllInput(int fd, int timeout, char do_echo) {
+static void DiscardAllInput(int timeout) {
+    if (simulate_machine) return;
     char c;
-    while (ReadWait(fd, timeout) > 0) {
-        read(fd, &c, 1);
-        if (do_echo) write(STDERR_FILENO, &c, 1);  // echo back.
+    while (AwaitReadReady(gcode_in_fd, timeout) > 0) {
+        read(gcode_in_fd, &c, 1);
+        if (!quiet) write(STDERR_FILENO, &c, 1);  // echo back.
     }
-}
-
-static int ReadLine(int fd, char *result, int len,
-                    char do_echo) {
-    int bytes_read = 0;
-    char c = 0;
-    while (c != '\n' && c != '\r' && bytes_read < len) {
-        if (read(fd, &c, 1) < 0)
-            return -1;
-        ++bytes_read;
-        *result++ = c;
-        if (do_echo) write(STDERR_FILENO, &c, 1);  // echo back.
-    }
-    *result = '\0';
-    return bytes_read;
 }
 
 // Ok comes on a single line.
-static void WaitForOk(int fd) {
+static void WaitForOk() {
     if (simulate_machine) return;
+    const int fd = gcode_in_fd;
     char buffer[512];
     char done = 0;
     while (!done) {
@@ -243,8 +250,6 @@ static void WaitForOk(int fd) {
             break;
         if (strncmp(buffer, "ok", 2) == 0) {
             done = 1;
-        } else {
-            if (!quiet) fprintf(stderr, "SKIP %s", buffer);
         }
     }
 }
@@ -252,7 +257,7 @@ static void WaitForOk(int fd) {
 static void FindLargestAxis(int js_fd, struct AxisConfig *axis_config) {
     struct js_event e;
     for (;;) {
-        if (WaitForEvent(js_fd, &e, 1000) <= 0)
+        if (JoystickWaitForEvent(js_fd, &e, 1000) <= 0)
             continue;
         if (e.type == JS_EVENT_AXIS
             && abs(e.value) > 32000) {
@@ -267,7 +272,7 @@ static void WaitForReleaseAxis(int js_fd, int channel, int *zero) {
     int zero_value = 1 << 17;
     struct js_event e;
     for (;;) {
-        if (WaitForEvent(js_fd, &e, 1000) <= 0)
+        if (JoystickWaitForEvent(js_fd, &e, 1000) <= 0)
             continue;
         if (e.type == JS_EVENT_AXIS && e.number == channel
             && abs(e.value) < 5000) {
@@ -279,7 +284,7 @@ static void WaitForReleaseAxis(int js_fd, int channel, int *zero) {
     // is the 'zero' position.
     const int64_t end_time = GetMillis() + 500;
     while (GetMillis() < end_time) {
-        if (WaitForEvent(js_fd, &e, 1000) <= 0)
+        if (JoystickWaitForEvent(js_fd, &e, 1000) <= 0)
             continue;
         if (e.type == JS_EVENT_AXIS && e.number == channel) {
             zero_value = e.value;
@@ -291,7 +296,7 @@ static void WaitForReleaseAxis(int js_fd, int channel, int *zero) {
 static void WaitAnyButtonPress(int js_fd, int *button_channel) {
     struct js_event e;
     for (;;) {
-        if (WaitForEvent(js_fd, &e, 1000) <= 0)
+        if (JoystickWaitForEvent(js_fd, &e, 1000) <= 0)
             continue;
         if (e.type == JS_EVENT_BUTTON && e.value > 0) {
             *button_channel = e.number;
@@ -303,7 +308,7 @@ static void WaitAnyButtonPress(int js_fd, int *button_channel) {
 static void WaitForButtonRelease(int js_fd, int channel) {
     struct js_event e;
     for (;;) {
-        if (WaitForEvent(js_fd, &e, 1000) <= 0)
+        if (JoystickWaitForEvent(js_fd, &e, 1000) <= 0)
             continue;
         if (e.type == JS_EVENT_BUTTON && e.number == channel && e.value == 0)
             return;
@@ -349,15 +354,15 @@ static int CreateConfig(int js_fd, struct Configuration *config) {
 // Read coordinates from printer.
 static int GetCoordinates(struct Vector *pos) {
     if (simulate_machine) return 1;
-    DiscardAllInput(STDIN_FILENO, 100, 1);
+    DiscardAllInput(100);
 
-    printf("M114\n"); fflush(stdout);  // read coordinates.
+    fprintf(gcode_out, "M114\n"); // read coordinates.
     if (!quiet) fprintf(stderr, "Reading initial absolute position\n");
     char buffer[512];
-    ReadLine(STDIN_FILENO, buffer, sizeof(buffer), 1);
+    ReadLine(gcode_in_fd, buffer, sizeof(buffer), 1);
     if (sscanf(buffer, "X:%f Y:%f Z:%f", &pos->axis[AXIS_X], &pos->axis[AXIS_Y],
                &pos->axis[AXIS_Z]) == 3) {
-        WaitForOk(STDIN_FILENO);
+        WaitForOk();
         if (!quiet) fprintf(stderr, "Got (x/y/z) = (%.3f/%.3f/%.3f)\n",
                             pos->axis[AXIS_X], pos->axis[AXIS_Y],
                             pos->axis[AXIS_Z]);
@@ -370,10 +375,10 @@ static int GetCoordinates(struct Vector *pos) {
 
 void GCodeGoto(struct Vector *pos, float feedrate_mm_sec) {
     if (simulate_machine) return;
-    printf("G1 X%.3f Y%.3f Z%.3f F%.3f\n", pos->axis[AXIS_X], pos->axis[AXIS_Y],
-           pos->axis[AXIS_Z], feedrate_mm_sec * 60);
-    fflush(stdout);
-    WaitForOk(STDIN_FILENO);
+    fprintf(gcode_out, "G1 X%.3f Y%.3f Z%.3f F%.3f\n",
+            pos->axis[AXIS_X], pos->axis[AXIS_Y], pos->axis[AXIS_Z],
+            feedrate_mm_sec * 60);
+    WaitForOk();
 }
 
 // Returns 1 if any gcode has been output or 0 if there was no need.
@@ -416,7 +421,7 @@ void HandlePlaceMemory(enum Button button, char is_pressed,
     } else {  // we act on release
         if (*accumulated_timeout >= 500) {
             memcpy(storage, machine_pos, sizeof(*storage)); // save
-            StoreSavedPoints(persistent_store, saved);
+            WriteSavedPoints(persistent_store, saved);
             if (!quiet) fprintf(stderr, "\nStored in %c (%.2f, %.2f, %.2f)\n",
                                 button_letter,
                                 machine_pos->axis[AXIS_X],
@@ -460,24 +465,24 @@ int JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
     // Wait until board is initialized. Some Marlin versions dump some
     // stuff out there which we want to ignore.
     if (!quiet) fprintf(stderr, "Init "); fflush(stderr);
-    if (!simulate_machine) DiscardAllInput(STDIN_FILENO, 5000, 1);
+    DiscardAllInput(5000);
     if (!quiet) fprintf(stderr, "done.\n");
 
-    printf("G21\n"); fflush(stdout); WaitForOk(STDIN_FILENO);  // Switch to metric.
+    fprintf(gcode_out, "G21\n"); WaitForOk();  // Switch to metric.
 
     char is_homed = 0;
 
     if (do_homing) {
         // Unfortunately, connecting to some Marlin instances resets it.
         // So home that we are in a defined state.
-        printf("G28\n"); fflush(stdout); WaitForOk(STDIN_FILENO);   // Home.
+        fprintf(gcode_out, "G28\n"); WaitForOk();   // Home.
         is_homed = 1;
     }
 
     // Relative mode (G91) seems to be pretty badly implemented and does not
     // deal with very small increments (which are rounded away).
     // So let's be absolute and keep track of the current position ourself.
-    printf("G90\n"); fflush(stdout); WaitForOk(STDIN_FILENO);  // Absolute coordinates.
+    fprintf(gcode_out, "G90\n"); WaitForOk();  // Absolute coordinates.
 
     if (!GetCoordinates(&machine_pos))
         return 1;
@@ -485,7 +490,7 @@ int JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
     int accumulated_timeout = -1;
 
     for (;;) {
-        int button_ev = WaitForJoystickButton(js_fd, interval_msec,
+        int button_ev = JoystickWaitForButton(js_fd, interval_msec,
                                               config, &speed_vector, &buttons);
         switch (button_ev) {
         case -1:  // timeout, i.e. our regular update interval.
@@ -501,17 +506,13 @@ int JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
             if (OutputJogGCode(&machine_pos, &speed_vector, machine_limit)) {
                 // We did emit some gcode. Now we're not homed anymore
                 is_homed = 0;
-            } else {
-                // Some quiet phase: discard all the 'ok's
-                DiscardAllInput(STDIN_FILENO, 10, 0);
             }
             break;
 
         case BUTTON_HOME:  // only home if not already.
             if (buttons.button[BUTTON_HOME] && !is_homed) {
                 is_homed = 1;
-                DiscardAllInput(STDIN_FILENO, 10, 0);
-                printf("G28\n"); fflush(stdout); WaitForOk(STDIN_FILENO);
+                fprintf(gcode_out, "G28\n"); WaitForOk();
                 if (!GetCoordinates(&machine_pos))
                     return 1;
             }
@@ -566,7 +567,7 @@ int main(int argc, char **argv) {
     const char *filename = NULL;
 
     int opt;
-    while ((opt = getopt(argc, argv, "C:j:x:z:L:hsp:")) != -1) {
+    while ((opt = getopt(argc, argv, "C:j:x:z:L:hsp:q:")) != -1) {
         switch (opt) {
         case 'C':
             op = DO_CREATE_CONFIG;
@@ -625,10 +626,16 @@ int main(int argc, char **argv) {
         }
     }
 
+    // Connection to the machine reading gcode. TODO: maybe provide
+    // listening on a socket ?
+    gcode_out = stdout;
+    gcode_in_fd = STDIN_FILENO;
+    setvbuf(gcode_out, NULL, _IONBF, 0);  // Don't buffer.
+
     switch (op) {
     case DO_CREATE_CONFIG:
         CreateConfig(js_fd, &config);
-        DumpConfig(filename, &config);
+        WriteConfig(filename, &config);
         break;
         
     case DO_JOG:
