@@ -97,8 +97,8 @@ static int AwaitReadReady(int fd, int timeout_millis) {
 
     FD_SET(fd, &read_fds);
     int s = select(fd + 1, &read_fds, NULL, NULL, &tv);
-    if (s <= 0)
-        return s;
+    if (s < 0)
+        return -1;
     return tv.tv_usec / 1000;
 }
 
@@ -120,7 +120,10 @@ static int ReadLine(int fd, char *result, int len, char do_echo) {
 int JoystickWaitForEvent(int fd, struct js_event *event, int timeout_ms) {
     const int timeout_left = AwaitReadReady(fd, timeout_ms);
     if (timeout_left > 0) {
-        read(fd, event, sizeof(*event));
+        if (read(fd, event, sizeof(*event)) < 0) {
+            perror("Reading from joystick");
+            return -1;
+        }
     }
     return timeout_left;
 }
@@ -144,8 +147,10 @@ static void JoystickInitialState(int js_fd, struct Configuration *config) {
     }
 }
 
-// Wait for a joystick button up to "timeout_ms" long. Returns negative
-// value on timeout or the button-id when a button event happened.
+// Wait for a joystick button up to "timeout_ms" long. Returns
+//   -2    on error
+//   -1    on timeout, e.g. timeout_ms reached
+//   >= 0  the button-id when a button event happened.
 // In case the axis position is changing, it updates "axis", but does not
 // return before the timeout, as this does not require immediate attention.
 static int JoystickWaitForButton(int fd, int timeout_ms,
@@ -157,8 +162,7 @@ static int JoystickWaitForButton(int fd, int timeout_ms,
         struct js_event e;
         timeout_left = JoystickWaitForEvent(fd, &e, timeout_left);
         if (timeout_left < 0) {
-            perror("Trouble reading joystick. Nastily exiting.");
-            exit(1);
+            return -2;
         }
         if (timeout_left == 0) {
             return -1;
@@ -348,6 +352,10 @@ int JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
         int button_ev = JoystickWaitForButton(js_fd, interval_msec,
                                               config, &speed_vector, &buttons);
         switch (button_ev) {
+        case -2:
+            if (!quiet) fprintf(stderr, "Joystick unplugged\n");
+            return 1;
+
         case -1:  // timeout, i.e. our regular update interval.
             if (accumulated_timeout >= 0) {
                 if (accumulated_timeout < 500
@@ -379,6 +387,7 @@ int JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
             break;
         }
     }
+    return 0;
 }
 
 static int usage(const char *progname) {
@@ -498,6 +507,10 @@ int main(int argc, char **argv) {
     gcode_out = stdout;
     gcode_in_fd = STDIN_FILENO;
     setvbuf(gcode_out, NULL, _IONBF, 0);  // Don't buffer.
+
+    // Stderr might be piped to another process. Make sure to flush that
+    // immediately.
+    setvbuf(stderr, NULL, _IONBF, 0);
 
     switch (op) {
     case DO_CREATE_CONFIG:
