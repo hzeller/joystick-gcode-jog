@@ -191,17 +191,20 @@ static int JoystickWaitForButton(int fd, int timeout_ms,
 
 // Discard all input until nothing is coming anymore within timeout. In
 // particular on first connect, this helps us to get into a clean state.
-static void DiscardAllInput(int timeout) {
-    if (simulate_machine) return;
+static int DiscardAllInput(int timeout) {
+    if (simulate_machine) return 0;
+    int total_bytes = 0;
     char buf[128];
     while (AwaitReadReady(gcode_in_fd, timeout) > 0) {
         int r = read(gcode_in_fd, buf, sizeof(buf));
         if (r < 0) {
             perror("reading trouble");
-            return;
+            return -1;
         }
+        total_bytes += r;
         if (!quiet && r > 0) write(STDERR_FILENO, buf, r);  // echo back.
     }
+    return total_bytes;
 }
 
 // 'ok' comes on a single line, maybe followed by something.
@@ -327,10 +330,14 @@ void JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
     // a defined starting way to read the absolute coordinates.
     // Wait until board is initialized. Some Marlin versions dump some
     // stuff out there which we want to ignore.
-    if (!quiet) fprintf(stderr, "Init "); fflush(stderr);
-    DiscardAllInput(5000);
-    if (!quiet) fprintf(stderr, "done.\n");
-
+    fprintf(gcode_out, "G21\nG21\n");  // Tickeling the serial line
+    if (!quiet) fprintf(stderr, "Clearing input [");
+    const int discarded = DiscardAllInput(5000);
+    if (!quiet) fprintf(stderr, "] done (discarded %d bytes).\n", discarded);
+    if (!quiet && discarded <= 0) {
+        fprintf(stderr, "Mmmh, zero bytes is suspicious; we'd expect at least "
+                "some bytes. Serial line ok ?\n");
+    }
     fprintf(gcode_out, "G21\n"); WaitForOk();  // Switch to metric.
 
     char is_homed = 0;
