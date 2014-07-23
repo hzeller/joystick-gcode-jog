@@ -1,8 +1,8 @@
 Jogging a 3d printer with a gamepad.
 ====================================
 
-Usage
-
+Options
+-------
      Usage: ./machine-jog <options>
        -C <config-dir>  : Create a configuration file for Joystick
        -j <config-dir>  : Jog machine using config
@@ -14,6 +14,9 @@ Usage
        -s           : machine not connected; simulate.
        -q           : Quiet. No chatter on stderr.
 
+Joystick Configuration
+----------------------
+
 First, create a configuration for your specific joystick. This will ask you
 to move the joystick to get the right axis and button mapping:
 
@@ -24,6 +27,13 @@ The directory will contain a configuration with the name of the joystick. That
 way, it is possible to have different configurations depending on the joystick
 name.
 
+The configuration asks you to move the X,Y,Z to their extreme values to learn
+which is your preferred axis. Also it asks you for a 'home' button, which
+is used to home the machine and six additional buttons that you can use to
+store and retrieve 'waypoints'.
+
+Wire Up
+-------
 For best flexibility, machine-jog communicates via stdin/stdout with the
 machine, which means you need to 'wire up' this communication with the machine.
 For instance, if your machine is connected via a terminal line (very common),
@@ -39,3 +49,12 @@ In another program that has has a connection open to the printer, this can
 start the machine-jog program in a sub-process and send everything from the
 stdout stream to the printer and back from the printer into stdin of the process.
 (This would be awesome in OctoPrint ...).
+
+Use
+---
+To move around, use the joysticks to manipulate x/y/z. The speed of movement is
+proportional to the deflection of the joystick.
+
+To 'store' a current point in one of the six memory buttons, just do a
+long-press on the button. A short-press on that button will go back to that
+position.
