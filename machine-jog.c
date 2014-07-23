@@ -399,13 +399,13 @@ static int usage(const char *progname) {
     fprintf(stderr, "Usage: %s <options>\n"
             "  -C <config-dir>  : Create a configuration file for Joystick\n"
             "  -j <config-dir>  : Jog machine using config\n"
-            "  -h           : Home on startup\n"
-            "  -p <persist-file> : persist saved points in given file\n"
-            "  -L <x,y,z>   : Machine limits in mm\n"
-            "  -x <speed>   : feedrate for xy in mm/s\n"
-            "  -z <speed>   : feedrate for z in mm/s\n"
-            "  -s           : machine not connected; simulate.\n"
-            "  -q           : Quiet. No chatter on stderr.\n",
+            "  -h               : Home on startup\n"
+            "  -p <persist-file>: persist saved points in given file\n"
+            "  -L <x,y,z>       : Machine limits in mm\n"
+            "  -x <speed>       : feedrate for xy in mm/s\n"
+            "  -z <speed>       : feedrate for z in mm/s\n"
+            "  -s               : machine not connected; simulate.\n"
+            "  -q               : Quiet. No chatter on stderr.\n",
             progname);
     return 1;
 }

@@ -6,13 +6,13 @@ Options
      Usage: ./machine-jog <options>
        -C <config-dir>  : Create a configuration file for Joystick
        -j <config-dir>  : Jog machine using config
-       -h           : Home on startup
-       -p <persist-file> : persist saved points in given file
-       -L <x,y,z>   : Machine limits in mm
-       -x <speed>   : feedrate for xy in mm/s
-       -z <speed>   : feedrate for z in mm/s
-       -s           : machine not connected; simulate.
-       -q           : Quiet. No chatter on stderr.
+       -h               : Home on startup
+       -p <persist-file>: persist saved points in given file
+       -L <x,y,z>       : Machine limits in mm
+       -x <speed>       : feedrate for xy in mm/s
+       -z <speed>       : feedrate for z in mm/s
+       -s               : machine not connected; simulate.
+       -q               : Quiet. No chatter on stderr.
 
 Joystick Configuration
 ----------------------
