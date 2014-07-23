@@ -1,6 +1,19 @@
 Jogging a 3d printer with a gamepad.
 ====================================
 
+Usage
+
+     Usage: ./machine-jog <options>
+       -C <config-dir>  : Create a configuration file for Joystick
+       -j <config-dir>  : Jog machine using config
+       -h           : Home on startup
+       -p <persist-file> : persist saved points in given file
+       -L <x,y,z>   : Machine limits in mm
+       -x <speed>   : feedrate for xy in mm/s
+       -z <speed>   : feedrate for z in mm/s
+       -s           : machine not connected; simulate.
+       -q           : Quiet. No chatter on stderr.
+
 First, create a configuration for your specific joystick. This will ask you
 to move the joystick to get the right axis and button mapping:
 
