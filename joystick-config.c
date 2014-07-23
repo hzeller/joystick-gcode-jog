@@ -1,11 +1,35 @@
 
 #include "joystick-config.h"
 
-#include <stdlib.h>
-#include <stdio.h>
 #include <linux/joystick.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 
-void WriteConfig(const char *filename, const struct Configuration *config) {
+// Assemble configuration file name from config dir and js_name.
+// Return 1 on success 0 on failure.
+static int AssembleFilename(const char *config_dir, const char *js_name,
+                            char *out_filename, int len) {
+    struct stat buf;
+    if (stat(config_dir, &buf) < 0) {
+        perror("Trouble stat()ing directory.");
+        return 0;
+    }
+    if (!S_ISDIR(buf.st_mode)) {
+        fprintf(stderr, "Not a directory: %s\n", config_dir);
+        return 0;
+    }
+    snprintf(out_filename, len, "%s/%s.config", config_dir, js_name);
+    return 1;
+}
+
+void WriteConfig(const char *config_dir, const char *js_name,
+                 const struct Configuration *config) {
+    char filename[1024];
+    if (!AssembleFilename(config_dir, js_name, filename, sizeof(filename)))
+        return;
     FILE *out = fopen(filename, "w");
     if (out == NULL) return;
     for (int i = 0; i < NUM_AXIS; ++i) {
@@ -20,8 +44,14 @@ void WriteConfig(const char *filename, const struct Configuration *config) {
 }
 
 // Return 1 on success.
-int ReadConfig(const char *filename, struct Configuration *config) {
+int ReadConfig(const char *config_dir, const char *js_name,
+               struct Configuration *config) {
+    char filename[1024];
+    if (!AssembleFilename(config_dir, js_name, filename, sizeof(filename)))
+        return 0;
     FILE *in = fopen(filename, "r");
+    if (in == NULL)
+        return 0;
     for (int i = 0; i < NUM_AXIS; ++i) {
         if (3 != fscanf(in, "A:%d %d %d\n",
                         &config->axis_config[i].channel,

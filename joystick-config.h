@@ -19,7 +19,9 @@ struct Configuration {
 int CreateConfig(int js_fd, struct Configuration *config);
 
 // Write configuration to file.
-void WriteConfig(const char *filename, const struct Configuration *config);
+void WriteConfig(const char *config_dir, const char *js_name,
+                 const struct Configuration *config);
 
 // Read config.
-int ReadConfig(const char *filename, struct Configuration *config);
+int ReadConfig(const char *config_dir, const char *js_name,
+               struct Configuration *config);

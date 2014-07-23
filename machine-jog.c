@@ -2,6 +2,7 @@
  * (c) 2014 Henner Zeller <h.zeller@acm.org>
  */
 
+#include <ctype.h>
 #include <fcntl.h>
 #include <getopt.h>
 #include <linux/joystick.h>
@@ -382,8 +383,8 @@ int JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
 
 static int usage(const char *progname) {
     fprintf(stderr, "Usage: %s <options>\n"
-            "  -C <config>  : Create a configuration file for Joystick\n"
-            "  -j <config>  : Jog machine using config\n"
+            "  -C <config-dir>  : Create a configuration file for Joystick\n"
+            "  -j <config-dir>  : Jog machine using config\n"
             "  -h           : Home on startup\n"
             "  -p <persist-file> : persist saved points in given file\n"
             "  -L <x,y,z>   : Machine limits in mm\n"
@@ -413,19 +414,28 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    char joystick_name[512];
+    if (ioctl(js_fd, JSIOCGNAME(sizeof(joystick_name)), joystick_name) < 0)
+        strncpy(joystick_name, "unknown-joystick", sizeof(joystick_name));
+    // Make a filename-friendly name out of it.
+    for (char *x = joystick_name; *x; ++x) {
+        if (isspace(*x)) *x = '-';
+    }
+    printf("Joystick-Name: %s\n", joystick_name);
+
     enum Operation {
         DO_NOTHING,
         DO_CREATE_CONFIG,
         DO_JOG
     } op = DO_NOTHING;
-    const char *filename = NULL;
+    const char *config_dir = NULL;
 
     int opt;
     while ((opt = getopt(argc, argv, "C:j:x:z:L:hsp:q:")) != -1) {
         switch (opt) {
         case 'C':
             op = DO_CREATE_CONFIG;
-            filename = strdup(optarg);
+            config_dir = strdup(optarg);
             break;
 
         case 'h':
@@ -472,7 +482,7 @@ int main(int argc, char **argv) {
 
         case 'j':
             op = DO_JOG;
-            filename = strdup(optarg);
+            config_dir = strdup(optarg);
             break;
 
         default: /* '?' */
@@ -489,13 +499,13 @@ int main(int argc, char **argv) {
     switch (op) {
     case DO_CREATE_CONFIG:
         CreateConfig(js_fd, &config);
-        WriteConfig(filename, &config);
+        WriteConfig(config_dir, joystick_name, &config);
         break;
         
     case DO_JOG:
-        if (ReadConfig(filename, &config) == 0) {
+        if (ReadConfig(config_dir, joystick_name, &config) == 0) {
             fprintf(stderr, "Problem reading joystick config file.\n"
-                    "Create a fresh one with -C %s\n", filename);
+                    "Create a fresh one with\n\t%s -C %s\n", argv[0], config_dir);
             return 1;
         }
         JoystickInitialState(js_fd, &config);
