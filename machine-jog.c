@@ -58,7 +58,7 @@ void WriteSavedPoints(const char *filename, struct SavedPoints *values) {
     FILE *out = fopen(filename, "w");  // Overwriting for now. TODO: tmp file.
     for (int i = 0; i < NUM_BUTTONS; ++i) {
         if (i == BUTTON_HOME) continue;
-        fprintf(out, "%.2f %.2f %.2f\n",
+        fprintf(out, "%7.2f %7.2f %7.2f\n",
                 values->storage[i].axis[AXIS_X],
                 values->storage[i].axis[AXIS_Y],
                 values->storage[i].axis[AXIS_Z]);
@@ -190,10 +190,14 @@ static int JoystickWaitForButton(int fd, int timeout_ms,
 
 static void DiscardAllInput(int timeout) {
     if (simulate_machine) return;
-    char c;
+    char buf[128];
     while (AwaitReadReady(gcode_in_fd, timeout) > 0) {
-        read(gcode_in_fd, &c, 1);
-        if (!quiet) write(STDERR_FILENO, &c, 1);  // echo back.
+        int r = read(gcode_in_fd, buf, sizeof(buf));
+        if (r < 0) {
+            perror("reading trouble");
+            return;
+        }
+        if (!quiet && r > 0) write(STDERR_FILENO, buf, r);  // echo back.
     }
 }
 
@@ -217,7 +221,7 @@ static void WaitForOk() {
 static int GetCoordinates(struct Vector *pos) {
     if (simulate_machine) return 1;
     DiscardAllInput(100);
-
+    
     fprintf(gcode_out, "M114\n"); // read coordinates.
     if (!quiet) fprintf(stderr, "Reading initial absolute position\n");
     char buffer[512];
@@ -305,7 +309,7 @@ void HandlePlaceMemory(enum Button button, char is_pressed,
     }
 }
 
-int JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
+void JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
                const struct Configuration *config) {
     struct Vector speed_vector;
     struct Vector machine_pos;
@@ -344,7 +348,7 @@ int JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
     fprintf(gcode_out, "G90\n"); WaitForOk();  // Absolute coordinates.
 
     if (!GetCoordinates(&machine_pos))
-        return 1;
+        return;
 
     int accumulated_timeout = -1;
 
@@ -354,7 +358,8 @@ int JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
         switch (button_ev) {
         case -2:
             if (!quiet) fprintf(stderr, "Joystick unplugged\n");
-            return 1;
+            fprintf(gcode_out, "M84\n"); WaitForOk();
+            return;
 
         case -1:  // timeout, i.e. our regular update interval.
             if (accumulated_timeout >= 0) {
@@ -377,7 +382,7 @@ int JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
                 is_homed = 1;
                 fprintf(gcode_out, "G28\n"); WaitForOk();
                 if (!GetCoordinates(&machine_pos))
-                    return 1;
+                    return;
             }
             break;
 
@@ -387,7 +392,7 @@ int JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
             break;
         }
     }
-    return 0;
+    fprintf(gcode_out, "M84\n"); WaitForOk();
 }
 
 static int usage(const char *progname) {

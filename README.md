@@ -39,7 +39,7 @@ machine, which means you need to 'wire up' this communication with the machine.
 For instance, if your machine is connected via a terminal line (very common),
 you can use `socat` to wire it up:
 
-    socat EXEC:"./machine-jog -j js-conf/ -x 120 -z 50 -h" /dev/ttyACM0,raw,echo=0,b230400
+    socat EXEC:"./machine-jog -j js-conf/ -x 120 -z 50 -h -p savedpoints.data" /dev/ttyACM0,raw,echo=0,b230400
 
 This tells `socat` to execute the `machine-jog` binary with the joystick
 configuration and connect its stdin/stdout to the `/dev/ttyACM0` terminal
