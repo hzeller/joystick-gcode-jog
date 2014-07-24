@@ -42,42 +42,63 @@ static int gcode_in_fd = STDIN_FILENO;  // .. and read directly from file desc.
 struct Vector {
     float axis[NUM_AXIS];
 };
+
+// State for a particular button.
 struct ButtonState {
-    char button[NUM_BUTTONS];
+    char is_pressed;
+    struct Vector stored;
+};
+struct Buttons {
+    int count;
+    struct ButtonState state[0]; // trick for easy memory allocation.
 };
 
-struct SavedPoints {
-    struct Vector storage[NUM_BUTTONS];
-};
+static struct Buttons* new_Buttons(int n) {
+    struct Buttons* result
+        = (struct Buttons*) malloc(sizeof(struct Buttons)
+                                   + n * sizeof(struct ButtonState));
+    result->count = n;
+    for (int i = 0; i < n; ++i) {
+        result->state[i].is_pressed = 0;
+        result->state[i].stored.axis[AXIS_X] = -1;
+    }
+    return result;
+}
+static void delete_Buttons(struct Buttons **b) {
+    free(*b);
+    *b = NULL;
+}
 
 static int quantize(int value, int q) {
     return value / q * q;
 }
 
-void WriteSavedPoints(const char *filename, struct SavedPoints *values) {
+void WriteSavedPoints(const char *filename, struct Buttons *buttons) {
     if (filename == NULL) return;
     FILE *out = fopen(filename, "w");  // Overwriting for now. TODO: tmp file.
-    for (int i = 0; i < NUM_BUTTONS; ++i) {
-        if (i == BUTTON_HOME) continue;
-        fprintf(out, "%7.2f %7.2f %7.2f\n",
-                values->storage[i].axis[AXIS_X],
-                values->storage[i].axis[AXIS_Y],
-                values->storage[i].axis[AXIS_Z]);
+    for (int i = 0; i < buttons->count; ++i) {
+        if (buttons->state[i].stored.axis[AXIS_X] < 0)
+            continue;
+        fprintf(out, "%2d: %7.2f %7.2f %7.2f\n", i,
+                buttons->state[i].stored.axis[AXIS_X],
+                buttons->state[i].stored.axis[AXIS_Y],
+                buttons->state[i].stored.axis[AXIS_Z]);
     }
     fclose(out);
 }
 
-void ReadSavedPoints(const char *filename, struct SavedPoints *values) {
+void ReadSavedPoints(const char *filename, struct Buttons *buttons) {
     if (filename == NULL) return;
     FILE *in = fopen(filename, "r");
     if (in == NULL) return;
-    for (int i = 0; i < NUM_BUTTONS; ++i) {
-        if (i == BUTTON_HOME) continue;
-        if (3 != fscanf(in, "%f %f %f\n",
-                        &values->storage[i].axis[AXIS_X],
-                        &values->storage[i].axis[AXIS_Y],
-                        &values->storage[i].axis[AXIS_Z]))
-            break;
+    int b;
+    struct Vector vec;
+    while (4 == fscanf(in, "%d: %f %f %f\n",
+                       &b, &vec.axis[AXIS_X], &vec.axis[AXIS_Y],
+                       &vec.axis[AXIS_Z])) {
+        if (b < 0 || b >= buttons->count)
+            continue;
+        buttons->state[b].stored = vec;
     }
     fclose(in);
 }
@@ -131,6 +152,7 @@ int JoystickWaitForEvent(int fd, struct js_event *event, int timeout_ms) {
 
 static void JoystickInitialState(int js_fd, struct Configuration *config) {
     struct js_event e;
+    config->highest_button = -1;
     // The initial state is sent on connect.
     while (JoystickWaitForEvent(js_fd, &e, 50) > 0) {
         if ((e.type & JS_EVENT_INIT) == 0)
@@ -145,28 +167,36 @@ static void JoystickInitialState(int js_fd, struct Configuration *config) {
                 }
             }
         }
+        if (e.type & JS_EVENT_BUTTON) {
+            if (e.value > config->highest_button)
+                config->highest_button = e.value;
+        }
     }
 }
 
-// Wait for a joystick button up to "timeout_ms" long. Returns
-//   -2    on error
-//   -1    on timeout, e.g. timeout_ms reached
-//   >= 0  the button-id when a button event happened.
+enum EventOutput {
+    JS_READ_ERROR = -3,
+    JS_REACHED_TIMEOUT = -2,
+    JS_HOME_BUTTON = -1
+};
+// Wait for a joystick button up to "timeout_ms" long. Returns one of
+// EventOutput or a positive number (>= 0) denoting the button that
+// has been pressed.
 // In case the axis position is changing, it updates "axis", but does not
 // return before the timeout, as this does not require immediate attention.
 static int JoystickWaitForButton(int fd, int timeout_ms,
                                  const struct Configuration *config,
                                  struct Vector *axis,
-                                 struct ButtonState *button) {
+                                 struct Buttons *buttons) {
     int timeout_left = timeout_ms;
     for (;;) {
         struct js_event e;
         timeout_left = JoystickWaitForEvent(fd, &e, timeout_left);
         if (timeout_left < 0) {
-            return -2;
+            return JS_READ_ERROR;
         }
         if (timeout_left == 0) {
-            return -1;
+            return JS_REACHED_TIMEOUT;
         }
 
         if (e.type == JS_EVENT_AXIS) {
@@ -179,11 +209,12 @@ static int JoystickWaitForButton(int fd, int timeout_ms,
                 }
             }
         } else if (e.type == JS_EVENT_BUTTON) {
-            for (int b = 0; b < NUM_BUTTONS; ++b) {
-                if (config->button_channel[b] == e.number) {
-                    button->button[b] = e.value; 
-                    return b;
-                }
+            if (e.number <= config->highest_button) {
+                buttons->state[e.number].is_pressed = e.value;
+                if (e.number == config->home_button)
+                    return JS_HOME_BUTTON;  // special button.
+                else
+                    return e.number;        // generic store button.
             }
         }
     }
@@ -276,20 +307,18 @@ int OutputJogGCode(struct Vector *pos, const struct Vector *speed,
     return 1;
 }
 
-void HandlePlaceMemory(enum Button button, char is_pressed,
-                       struct SavedPoints *saved,
+void HandlePlaceMemory(int b, struct Buttons *buttons,
                        int *accumulated_timeout,
                        struct Vector *machine_pos) {
-    const char button_letter = 'A' + (button - BUTTON_STORE_A);
-    struct Vector *storage = &saved->storage[button];
-    if (is_pressed) {
+    struct Vector *storage = &buttons->state[b].stored;
+    if (buttons->state[b].is_pressed) {
         *accumulated_timeout = 0;
     } else {  // we act on release
         if (*accumulated_timeout >= 500) {
             memcpy(storage, machine_pos, sizeof(*storage)); // save
-            WriteSavedPoints(persistent_store, saved);
-            if (!quiet) fprintf(stderr, "\nStored in %c (%.2f, %.2f, %.2f)\n",
-                                button_letter,
+            WriteSavedPoints(persistent_store, buttons);
+            if (!quiet) fprintf(stderr, "\nStored in %d (%.2f, %.2f, %.2f)\n",
+                                b,
                                 machine_pos->axis[AXIS_X],
                                 machine_pos->axis[AXIS_Y],
                                 machine_pos->axis[AXIS_Z]);
@@ -297,15 +326,14 @@ void HandlePlaceMemory(enum Button button, char is_pressed,
             if (storage->axis[AXIS_X] >= 0) {
                 memcpy(machine_pos, storage, sizeof(*storage)); // restore
                 if (!quiet) fprintf(stderr,
-                                    "\nGoto position %c -> (%.2f, %.2f, %.2f)\n",
-                                    button_letter,
+                                    "\nGoto position %d -> (%.2f, %.2f, %.2f)\n",
+                                    b,
                                     machine_pos->axis[AXIS_X],
                                     machine_pos->axis[AXIS_Y],
                                     machine_pos->axis[AXIS_Z]);
                 GCodeGoto(machine_pos, max_feedrate_mm_p_sec_xy);
             } else {
-                if (!quiet) fprintf(stderr,
-                                    "\nButton %c undefined\n", button_letter);
+                if (!quiet) fprintf(stderr, "\nButton %d undefined\n", b);
             }
         }
         *accumulated_timeout = -1;
@@ -316,15 +344,10 @@ void JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
                const struct Configuration *config) {
     struct Vector speed_vector;
     struct Vector machine_pos;
-    struct ButtonState buttons;
-    struct SavedPoints saved;
     memset(&speed_vector, 0, sizeof(speed_vector));
     memset(&machine_pos, 0, sizeof(machine_pos));
-    memset(&buttons, 0, sizeof(buttons));
-    memset(&saved, 0, sizeof(saved));
-    for (int i = 0; i < NUM_BUTTONS; ++i)
-        saved.storage[i].axis[AXIS_X] = -1;
-    ReadSavedPoints(persistent_store, &saved);
+    struct Buttons *buttons = new_Buttons(config->highest_button + 1);
+    ReadSavedPoints(persistent_store, buttons);
 
     // Skip initial stuff coming from the machine. We need to have
     // a defined starting way to read the absolute coordinates.
@@ -358,17 +381,18 @@ void JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
         return;
 
     int accumulated_timeout = -1;
-
-    for (;;) {
+    int done = 0;
+    while (!done) {
         int button_ev = JoystickWaitForButton(js_fd, interval_msec,
-                                              config, &speed_vector, &buttons);
+                                              config, &speed_vector, buttons);
         switch (button_ev) {
-        case -2:
+        case JS_READ_ERROR:
             if (!quiet) fprintf(stderr, "Joystick unplugged\n");
             fprintf(gcode_out, "M84\n"); WaitForOk();
-            return;
+            done = 1;
+            break;
 
-        case -1:  // timeout, i.e. our regular update interval.
+        case JS_REACHED_TIMEOUT:  // timeout, i.e. our regular update interval.
             if (accumulated_timeout >= 0) {
                 if (accumulated_timeout < 500
                     && accumulated_timeout + interval_msec >= 500) {
@@ -384,21 +408,22 @@ void JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
             }
             break;
 
-        case BUTTON_HOME:  // only home if not already.
-            if (buttons.button[BUTTON_HOME] && !is_homed) {
+        case JS_HOME_BUTTON:  // only home if not already.
+            if (buttons->state[config->home_button].is_pressed && !is_homed) {
                 is_homed = 1;
                 fprintf(gcode_out, "G28\n"); WaitForOk();
                 if (!GetCoordinates(&machine_pos))
-                    return;
+                    done = 1;
             }
             break;
 
         default:
-            HandlePlaceMemory(button_ev, buttons.button[button_ev],
-                              &saved, &accumulated_timeout, &machine_pos);
+            HandlePlaceMemory(button_ev, buttons,
+                              &accumulated_timeout, &machine_pos);
             break;
         }
     }
+    delete_Buttons(&buttons);
 }
 
 static int usage(const char *progname) {

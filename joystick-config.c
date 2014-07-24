@@ -38,8 +38,7 @@ void WriteConfig(const char *config_dir, const char *js_name,
                 config->axis_config[i].zero,
                 config->axis_config[i].max_value);
     }
-    for (int i = 0; i < NUM_BUTTONS; ++i)
-        fprintf(out, "B:%d\n", config->button_channel[i]);
+    fprintf(out, "B:%d\n", config->home_button);
     fclose(out);
 }
 
@@ -59,10 +58,8 @@ int ReadConfig(const char *config_dir, const char *js_name,
                         &config->axis_config[i].max_value))
             return 0;
     }
-    for (int i = 0; i < NUM_BUTTONS; ++i) {
-        if (1 != fscanf(in, "B:%d\n", &config->button_channel[i]))
-            return 0;
-    }
+    if (1 != fscanf(in, "B:%d\n", &config->home_button))
+        return 0;
     fclose(in);
     return 1;
 }
@@ -158,14 +155,6 @@ int CreateConfig(int js_fd, struct Configuration *config) {
                   &config->axis_config[AXIS_Y]);
     GetAxisConfig(js_fd, "Move Z all the way up            ^  ",
                   &config->axis_config[AXIS_Z]);
-    GetButtonConfig(js_fd,
-                    "Press HOME button.", &config->button_channel[BUTTON_HOME]);
-    for (int i = 0; i < NUM_BUTTONS; ++i) {
-        if (i == BUTTON_HOME) continue;
-        char buffer[512];
-        snprintf(buffer, sizeof(buffer),
-                 "Press Memory %c button.", 'A' + (i - BUTTON_STORE_A));
-        GetButtonConfig(js_fd, buffer, &config->button_channel[i]);
-    }
+    GetButtonConfig(js_fd, "Press HOME button.", &config->home_button);
     return 1;
 }

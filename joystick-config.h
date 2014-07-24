@@ -12,7 +12,8 @@ struct AxisConfig {
 
 struct Configuration {
     struct AxisConfig axis_config[NUM_AXIS];
-    int button_channel[NUM_BUTTONS];
+    int home_button;     // id of the home button.
+    int highest_button;  // highest button found.
 };
 
 // Interactively create a configuration
