@@ -168,8 +168,8 @@ static void JoystickInitialState(int js_fd, struct Configuration *config) {
             }
         }
         if (e.type & JS_EVENT_BUTTON) {
-            if (e.value > config->highest_button)
-                config->highest_button = e.value;
+            if (e.number > config->highest_button)
+                config->highest_button = e.number;
         }
     }
 }
@@ -177,7 +177,8 @@ static void JoystickInitialState(int js_fd, struct Configuration *config) {
 enum EventOutput {
     JS_READ_ERROR = -3,
     JS_REACHED_TIMEOUT = -2,
-    JS_HOME_BUTTON = -1
+    JS_HOME_BUTTON = -1,
+    // values >= 0 are button values.
 };
 // Wait for a joystick button up to "timeout_ms" long. Returns one of
 // EventOutput or a positive number (>= 0) denoting the button that
@@ -355,7 +356,7 @@ void JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
     // stuff out there which we want to ignore.
     fprintf(gcode_out, "G21\nG21\n");  // Tickeling the serial line
     if (!quiet) fprintf(stderr, "Clearing input [");
-    const int discarded = DiscardAllInput(5000);
+    const int discarded = DiscardAllInput(8000);
     if (!quiet) fprintf(stderr, "] done (discarded %d bytes).\n", discarded);
     if (!quiet && discarded <= 0) {
         fprintf(stderr, "Mmmh, zero bytes is suspicious; we'd expect at least "
