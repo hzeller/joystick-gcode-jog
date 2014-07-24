@@ -405,6 +405,8 @@ static int usage(const char *progname) {
     fprintf(stderr, "Usage: %s <options>\n"
             "  -C <config-dir>  : Create a configuration file for Joystick\n"
             "  -j <config-dir>  : Jog machine using config\n"
+            "  -n <config-name> : Optional config name; otherwise derived from "
+            "joystick name\n"
             "  -h               : Home on startup\n"
             "  -p <persist-file>: persist saved points in given file\n"
             "  -L <x,y,z>       : Machine limits in mm\n"
@@ -433,13 +435,19 @@ int main(int argc, char **argv) {
         DO_JOG
     } op = DO_NOTHING;
     const char *config_dir = NULL;
+    char joystick_name[512];
+    memset(joystick_name, 0, sizeof(joystick_name));
 
     int opt;
-    while ((opt = getopt(argc, argv, "C:j:x:z:L:hsp:q:")) != -1) {
+    while ((opt = getopt(argc, argv, "C:j:x:z:L:hsp:q:n:")) != -1) {
         switch (opt) {
         case 'C':
             op = DO_CREATE_CONFIG;
             config_dir = strdup(optarg);
+            break;
+
+        case 'n':
+            strncpy(joystick_name, optarg, sizeof(joystick_name) - 1);
             break;
 
         case 'h':
@@ -517,14 +525,15 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    char joystick_name[512];
-    if (ioctl(js_fd, JSIOCGNAME(sizeof(joystick_name)), joystick_name) < 0)
-        strncpy(joystick_name, "unknown-joystick", sizeof(joystick_name));
-    // Make a filename-friendly name out of it.
-    for (char *x = joystick_name; *x; ++x) {
-        if (isspace(*x)) *x = '-';
+    if (joystick_name[0] == '\0') {
+        if (ioctl(js_fd, JSIOCGNAME(sizeof(joystick_name)), joystick_name) < 0)
+            strncpy(joystick_name, "unknown-joystick", sizeof(joystick_name));
+        // Make a filename-friendly name out of it.
+        for (char *x = joystick_name; *x; ++x) {
+            if (isspace(*x)) *x = '-';
+        }
     }
-    printf("Joystick-Name: %s\n", joystick_name);
+    if (!quiet) printf("joystick configuration name: %s\n", joystick_name);
 
     if (op == DO_CREATE_CONFIG) {
         CreateConfig(js_fd, &config);
