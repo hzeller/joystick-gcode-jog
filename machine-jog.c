@@ -316,7 +316,7 @@ void HandlePlaceMemory(int b, struct Buttons *buttons,
         *accumulated_timeout = 0;
     } else {  // we act on release
         if (*accumulated_timeout >= 500) {
-            memcpy(storage, machine_pos, sizeof(*storage)); // save
+            *storage = *machine_pos;  // save
             WriteSavedPoints(persistent_store, buttons);
             if (!quiet) fprintf(stderr, "\nStored in %d (%.2f, %.2f, %.2f)\n",
                                 b,
@@ -325,7 +325,7 @@ void HandlePlaceMemory(int b, struct Buttons *buttons,
                                 machine_pos->axis[AXIS_Z]);
         } else {
             if (storage->axis[AXIS_X] >= 0) {
-                memcpy(machine_pos, storage, sizeof(*storage)); // restore
+                *machine_pos = *storage;
                 if (!quiet) fprintf(stderr,
                                     "\nGoto position %d -> (%.2f, %.2f, %.2f)\n",
                                     b,
