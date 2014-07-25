@@ -2,6 +2,7 @@
  * (c) 2014 Henner Zeller <h.zeller@acm.org>
  */
 
+#include <assert.h>
 #include <ctype.h>
 #include <fcntl.h>
 #include <getopt.h>
@@ -18,6 +19,7 @@
 
 #include "machine-jog.h"
 #include "joystick-config.h"
+#include "rumble.h"
 
 static const int kMaxFeedrate_xy = 120;
 static const int kMaxFeedrate_z = 10;  // Z is typically pretty slow
@@ -297,14 +299,25 @@ int OutputJogGCode(struct Vector *pos, const struct Vector *speed,
         return 0;
 
     float interval = machine_interval_msec / 1000.0;
+    char do_rumble = 0;
     for (int a = AXIS_X; a < NUM_AXIS; ++a) {
+        const char at_limit_before
+            = pos->axis[a] <= 0 || pos->axis[a] >= limit->axis[a];
         pos->axis[a] = pos->axis[a] + speed->axis[a] * feedrate * interval;
-        if (pos->axis[a] < 0) pos->axis[a] = 0;
-        if (pos->axis[a] > limit->axis[a]) pos->axis[a] = limit->axis[a];
+        if (pos->axis[a] < 0) {
+            pos->axis[a] = 0;
+            do_rumble |= !at_limit_before;
+        }
+        if (pos->axis[a] > limit->axis[a]) {
+            pos->axis[a] = limit->axis[a];
+            do_rumble |= !at_limit_before;
+        }
     }
     GCodeGoto(pos, feedrate);
     if (!quiet) fprintf(stderr, "Goto (x/y/z) = (%.2f/%.2f/%.2f)      \r",
                         pos->axis[AXIS_X], pos->axis[AXIS_Y], pos->axis[AXIS_Z]);
+    if (do_rumble)
+        Rumble();
     return 1;
 }
 
@@ -318,6 +331,7 @@ void HandlePlaceMemory(int b, struct Buttons *buttons,
         if (*accumulated_timeout >= 500) {
             *storage = *machine_pos;  // save
             WriteSavedPoints(persistent_store, buttons);
+            Rumble();  // Feedback that it is stored now.
             if (!quiet) fprintf(stderr, "\nStored in %d (%.2f, %.2f, %.2f)\n",
                                 b,
                                 machine_pos->axis[AXIS_X],
@@ -382,6 +396,7 @@ void JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
         return;
 
     int accumulated_timeout = -1;
+    int last_button_ev = 0;
     int done = 0;
     while (!done) {
         int button_ev = JoystickWaitForButton(js_fd, interval_msec,
@@ -395,13 +410,13 @@ void JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
 
         case JS_REACHED_TIMEOUT:  // timeout, i.e. our regular update interval.
             if (accumulated_timeout >= 0) {
-                if (accumulated_timeout < 500
-                    && accumulated_timeout + interval_msec >= 500) {
-                    // If the user releases the button now, things will be
-                    // stored. Let them know.
-                    if (!quiet) fprintf(stderr, "\nStore...");
-                }
                 accumulated_timeout += interval_msec;
+                if (accumulated_timeout > 500) {  // auto-release long press.
+                    assert(buttons->state[last_button_ev].is_pressed);
+                    buttons->state[last_button_ev].is_pressed = 0;
+                    HandlePlaceMemory(last_button_ev, buttons,
+                                      &accumulated_timeout, &machine_pos);
+                }
             }
             if (OutputJogGCode(&machine_pos, &speed_vector, machine_limit)) {
                 // We did emit some gcode. Now we're not homed anymore
@@ -421,6 +436,7 @@ void JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
         default:
             HandlePlaceMemory(button_ev, buttons,
                               &accumulated_timeout, &machine_pos);
+            last_button_ev = button_ev;
             break;
         }
     }
@@ -544,6 +560,7 @@ int main(int argc, char **argv) {
     // The Joystick. The first time we open it, the zero values are not
     // yet properly established. So let's close the first instance right awawy
     // and use the next open :)
+    // TODO: maybe not hardcode the joystick number. For now, expect it to be 0
     close(open("/dev/input/js0", O_RDONLY));
     const int js_fd = open("/dev/input/js0", O_RDONLY);
     if (js_fd < 0) {
@@ -571,6 +588,7 @@ int main(int argc, char **argv) {
             return 1;
         }
         JoystickInitialState(js_fd, &config);
+        JoystickRumbleInit(0);
         JogMachine(js_fd, do_homing, &machine_limits, &config);
     }
 
