@@ -67,7 +67,7 @@ void JoystickRumbleInit(int joystick_id) {
     rumble_effect_id = rumble_effect.id;
 }
 
-void Rumble() {
+void JoystickRumble(int ms) {
     if (rumble_device_fd < 0)
         return;
     struct input_event play;
@@ -77,7 +77,7 @@ void Rumble() {
     write(rumble_device_fd, &play, sizeof(play));
     struct timespec tv;
     tv.tv_sec = 0;
-    tv.tv_nsec = 80 * 1000000L;
+    tv.tv_nsec = ms * 1000000L;
     nanosleep(&tv, NULL);
     play.value = 0;
     write(rumble_device_fd, &play, sizeof(play));

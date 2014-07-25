@@ -68,8 +68,9 @@ Should be fairly easy to add for someone who knows Python...)
 Use
 ---
 To move around, use the joysticks to manipulate x/y/z. The speed of movement is
-proportional to the deflection of the joystick.
+proportional to the deflection of the joystick. Hitting the limits of the machine
+is fed back with a short rumble (if supported by gamepad).
 
 To 'store' a current point in one of the six memory buttons, just do a
-long-press on the button. A short-press on that button will go back to that
-position.
+long-press on the button (acknowledged by a short rumble). A short-press on
+that button will go back to that position.

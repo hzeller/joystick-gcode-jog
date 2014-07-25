@@ -23,6 +23,7 @@
 
 static const int kMaxFeedrate_xy = 120;
 static const int kMaxFeedrate_z = 10;  // Z is typically pretty slow
+static const int kRumbleTimeMs = 80;
 
 // Some global state.
 static int max_feedrate_mm_p_sec_xy;
@@ -317,7 +318,7 @@ int OutputJogGCode(struct Vector *pos, const struct Vector *speed,
     if (!quiet) fprintf(stderr, "Goto (x/y/z) = (%.2f/%.2f/%.2f)      \r",
                         pos->axis[AXIS_X], pos->axis[AXIS_Y], pos->axis[AXIS_Z]);
     if (do_rumble)
-        Rumble();
+        JoystickRumble(kRumbleTimeMs);
     return 1;
 }
 
@@ -331,7 +332,7 @@ void HandlePlaceMemory(int b, struct Buttons *buttons,
         if (*accumulated_timeout >= 500) {
             *storage = *machine_pos;  // save
             WriteSavedPoints(persistent_store, buttons);
-            Rumble();  // Feedback that it is stored now.
+            JoystickRumble(kRumbleTimeMs);  // Feedback that it is stored now.
             if (!quiet) fprintf(stderr, "\nStored in %d (%.2f, %.2f, %.2f)\n",
                                 b,
                                 machine_pos->axis[AXIS_X],
