@@ -369,7 +369,7 @@ void JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
     // a defined starting way to read the absolute coordinates.
     // Wait until board is initialized. Some Marlin versions dump some
     // stuff out there which we want to ignore.
-    fprintf(gcode_out, "G21\nG21\n");  // Tickeling the serial line
+    fprintf(gcode_out, "G21\n");  // Tickeling the serial line
     if (!quiet) fprintf(stderr, "Clearing input [");
     const int discarded = DiscardAllInput(8000);
     if (!quiet) fprintf(stderr, "] done (discarded %d bytes).\n", discarded);
