@@ -277,6 +277,12 @@ static int GetCoordinates(struct Vector *pos) {
     }
 }
 
+void GCodeHome() {
+    if (simulate_machine) return;
+    fprintf(gcode_out, "G28 X0 Y0\n"); WaitForOk();
+    fprintf(gcode_out, "G28 Z0\n"); WaitForOk();
+}
+
 void GCodeGoto(struct Vector *pos, float feedrate_mm_sec) {
     if (simulate_machine) return;
     fprintf(gcode_out, "G1 X%.3f Y%.3f Z%.3f F%.3f\n",
@@ -384,7 +390,7 @@ void JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
     if (do_homing) {
         // Unfortunately, connecting to some Marlin instances resets it.
         // So home that we are in a defined state.
-        fprintf(gcode_out, "G28\n"); WaitForOk();   // Home.
+        GCodeHome();
         is_homed = 1;
     }
 
@@ -428,7 +434,7 @@ void JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
         case JS_HOME_BUTTON:  // only home if not already.
             if (buttons->state[config->home_button].is_pressed && !is_homed) {
                 is_homed = 1;
-                fprintf(gcode_out, "G28\n"); WaitForOk();
+                GCodeHome();
                 if (!GetCoordinates(&machine_pos))
                     done = 1;
             }
