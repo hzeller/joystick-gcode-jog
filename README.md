@@ -50,7 +50,9 @@ you can use `socat` to wire it up:
 This tells `socat` to execute the `machine-jog` binary with the joystick
 configuration and connect its stdin/stdout to the `/dev/ttyACM0` terminal
 with a bitrate of 230400. If you use BeagleG, then you'd connect it to the
-TCP socket.
+TCP socket:
+
+    socat EXEC:"./machine-jog -j config/ -x 100 -z 20 -p savedpoints.data" TCP4:beagleg-machine.local:4000
 
 This could be automatically started in a udev-rule for instance.
 

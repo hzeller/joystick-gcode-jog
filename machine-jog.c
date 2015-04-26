@@ -25,6 +25,7 @@
 static const int kMaxFeedrate_xy = 120;
 static const int kMaxFeedrate_z = 10;  // Z is typically pretty slow
 static const int kRumbleTimeMs = 80;
+static const int kMotorTimeoutSeconds = 5;
 
 // Some global state.
 static int max_feedrate_mm_p_sec_xy;
@@ -279,18 +280,36 @@ static int GetCoordinates(struct Vector *pos) {
     }
 }
 
-void GCodeHome() {
+static time_t last_motor_on_time = 0;   // Quasi local state for motor move ops.
+static void GCodeHome() {
     if (simulate_machine) return;
     fprintf(gcode_out, "G28 X0 Y0\n"); WaitForOk();
     fprintf(gcode_out, "G28 Z0\n"); WaitForOk();
+    last_motor_on_time = time(NULL);
 }
 
-void GCodeGoto(struct Vector *pos, float feedrate_mm_sec) {
+static void GCodeGoto(struct Vector *pos, float feedrate_mm_sec) {
     if (simulate_machine) return;
     fprintf(gcode_out, "G1 X%.3f Y%.3f Z%.3f F%.3f\n",
             pos->axis[AXIS_X], pos->axis[AXIS_Y], pos->axis[AXIS_Z],
             feedrate_mm_sec * 60);
     WaitForOk();
+    last_motor_on_time = time(NULL);
+}
+
+static void GCodeEnsureMotorOff() {
+    if (last_motor_on_time) {
+        fprintf(gcode_out, "M84\n"); WaitForOk();
+        last_motor_on_time = 0;
+    }
+}
+
+// Switch motor off if it has been idle for kMotorTimeoutSeconds
+static void CheckMotorTimeout() {
+    if (last_motor_on_time > 0
+        && time(NULL) - last_motor_on_time > kMotorTimeoutSeconds) {
+        GCodeEnsureMotorOff();
+    }
 }
 
 // Returns 1 if any gcode has been output or 0 if there was no need.
@@ -404,9 +423,6 @@ void JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
     if (!GetCoordinates(&machine_pos))
         return;
 
-    const int kMotorTimeoutSeconds = 5;
-    time_t last_jog_time = 0;
-    char motor_on = 0;
     int accumulated_timeout = -1;
     int last_button_ev = 0;
     int done = 0;
@@ -416,7 +432,7 @@ void JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
         switch (button_ev) {
         case JS_READ_ERROR:
             if (!quiet) fprintf(stderr, "Joystick unplugged\n");
-            fprintf(gcode_out, "M84\n"); WaitForOk();
+            GCodeEnsureMotorOff();
             done = 1;
             break;
 
@@ -433,14 +449,8 @@ void JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
             if (OutputJogGCode(&machine_pos, &speed_vector, machine_limit)) {
                 // We did emit some gcode. Now we're not homed anymore
                 is_homed = 0;
-                last_jog_time = time(NULL);
-                motor_on = 1;
             } else {
-                if (motor_on &&
-                    (time(NULL) - last_jog_time) >= kMotorTimeoutSeconds) {
-                    fprintf(gcode_out, "M84\n"); WaitForOk();
-                    motor_on = 0;
-                }
+                CheckMotorTimeout();
             }
             break;
 
