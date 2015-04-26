@@ -16,6 +16,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <time.h>
 
 #include "machine-jog.h"
 #include "joystick-config.h"
@@ -402,6 +403,9 @@ void JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
     if (!GetCoordinates(&machine_pos))
         return;
 
+    const int kMotorTimeoutSeconds = 5;
+    time_t last_jog_time = 0;
+    char motor_on = 0;
     int accumulated_timeout = -1;
     int last_button_ev = 0;
     int done = 0;
@@ -428,6 +432,14 @@ void JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
             if (OutputJogGCode(&machine_pos, &speed_vector, machine_limit)) {
                 // We did emit some gcode. Now we're not homed anymore
                 is_homed = 0;
+                last_jog_time = time(NULL);
+                motor_on = 1;
+            } else {
+                if (motor_on &&
+                    (time(NULL) - last_jog_time) >= kMotorTimeoutSeconds) {
+                    fprintf(gcode_out, "M84\n"); WaitForOk();
+                    motor_on = 0;
+                }
             }
             break;
 
