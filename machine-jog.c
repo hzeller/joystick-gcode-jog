@@ -268,7 +268,8 @@ static int GetCoordinates(struct Vector *pos) {
     if (sscanf(buffer, "X:%f Y:%f Z:%f", &pos->axis[AXIS_X], &pos->axis[AXIS_Y],
                &pos->axis[AXIS_Z]) == 3) {
         WaitForOk();
-        if (!quiet) fprintf(stderr, "Got (x/y/z) = (%.3f/%.3f/%.3f)\n",
+        if (!quiet) fprintf(stderr, "Got machine pos (x/y/z) "
+                            "= (%.3f/%.3f/%.3f)\n",
                             pos->axis[AXIS_X], pos->axis[AXIS_Y],
                             pos->axis[AXIS_Z]);
         return 1;
