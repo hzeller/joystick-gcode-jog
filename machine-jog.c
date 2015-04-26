@@ -583,7 +583,8 @@ int main(int argc, char **argv) {
             if (isspace(*x)) *x = '-';
         }
     }
-    if (!quiet) printf("joystick configuration name: %s\n", joystick_name);
+    if (!quiet) fprintf(stderr, "joystick configuration name: %s\n",
+                        joystick_name);
 
     if (op == DO_CREATE_CONFIG) {
         CreateConfig(js_fd, &config);

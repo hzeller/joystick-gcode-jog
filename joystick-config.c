@@ -135,7 +135,7 @@ static void GetAxisConfig(int js_fd,
                           const char *msg, struct AxisConfig *axis_config) {
     fprintf(stderr, "%s", msg); fflush(stderr);
     FindLargestAxis(js_fd, axis_config);
-    fprintf(stderr, "Thanks. Nove move to center.\n");
+    fprintf(stderr, "Thanks. Move back to center.\n");
     WaitForReleaseAxis(js_fd, axis_config->channel, &axis_config->zero);
 }
 
