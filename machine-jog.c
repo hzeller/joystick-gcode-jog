@@ -9,6 +9,7 @@
 #include <linux/joystick.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -32,7 +33,6 @@ static int max_feedrate_mm_p_sec_xy;
 static int max_feedrate_mm_p_sec_z;
 
 static const long interval_msec = 20;   // update interval between reads.
-static const long machine_interval_msec = 20;
 
 // Flags.
 static int simulate_machine = 0;
@@ -106,6 +106,12 @@ void ReadSavedPoints(const char *filename, struct Buttons *buttons) {
         buttons->state[b].stored = vec;
     }
     fclose(in);
+}
+
+static int64_t get_time_millis() {
+    struct timeval tval;
+    gettimeofday(&tval, NULL);
+    return (int64_t) tval.tv_sec * 1000 + tval.tv_usec / 1000;
 }
 
 // Wait for input to become ready for read or timeout reached.
@@ -313,7 +319,8 @@ static void CheckMotorTimeout() {
 }
 
 // Returns 1 if any gcode has been output or 0 if there was no need.
-int OutputJogGCode(struct Vector *pos, const struct Vector *speed,
+int OutputJogGCode(int64_t interval_ms,
+                   struct Vector *pos, const struct Vector *speed,
                    const struct Vector *limit) {
     // We get the timeout in regular intervals.
     const float euklid = sqrtf(speed->axis[AXIS_X] * speed->axis[AXIS_X]
@@ -326,7 +333,10 @@ int OutputJogGCode(struct Vector *pos, const struct Vector *speed,
     if (fabs(feedrate) < 0.1)
         return 0;
 
-    float interval = machine_interval_msec / 1000.0;
+    // The interval_ms is empirically how long it took since the
+    // last update.
+    if (interval_ms > 100) interval_ms = 100;
+    const float interval = interval_ms / 1000.0;
     char do_rumble = 0;
     for (int a = AXIS_X; a < NUM_AXIS; ++a) {
         const char at_limit_before
@@ -423,6 +433,7 @@ void JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
     if (!GetCoordinates(&machine_pos))
         return;
 
+    int64_t last_jog_time = 0;
     int accumulated_timeout = -1;
     int last_button_ev = 0;
     int done = 0;
@@ -436,7 +447,7 @@ void JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
             done = 1;
             break;
 
-        case JS_REACHED_TIMEOUT:  // timeout, i.e. our regular update interval.
+        case JS_REACHED_TIMEOUT: { // timeout, i.e. our regular update interval.
             if (accumulated_timeout >= 0) {
                 accumulated_timeout += interval_msec;
                 if (accumulated_timeout > 500) {  // auto-release long press.
@@ -446,12 +457,16 @@ void JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
                                       &accumulated_timeout, &machine_pos);
                 }
             }
-            if (OutputJogGCode(&machine_pos, &speed_vector, machine_limit)) {
+            const int64_t now = get_time_millis();
+            if (OutputJogGCode(now - last_jog_time,
+                               &machine_pos, &speed_vector, machine_limit)) {
                 // We did emit some gcode. Now we're not homed anymore
                 is_homed = 0;
+                last_jog_time = now;
             } else {
                 CheckMotorTimeout();
             }
+        }
             break;
 
         case JS_HOME_BUTTON:  // only home if not already.
