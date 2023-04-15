@@ -3,16 +3,20 @@ Jogging a 3d printer with a gamepad.
 
 Options
 -------
-     Usage: ./machine-jog <options>
-       -C <config-dir>  : Create a configuration file for Joystick
-       -j <config-dir>  : Jog machine using config
-       -h               : Home on startup
-       -p <persist-file>: persist saved points in given file
-       -L <x,y,z>       : Machine limits in mm
-       -x <speed>       : feedrate for xy in mm/s
-       -z <speed>       : feedrate for z in mm/s
-       -s               : machine not connected; simulate.
-       -q               : Quiet. No chatter on stderr.
+```
+Usage: ./machine-jog <options>
+  -C <config-dir>  : Create a configuration file for Joystick, then exit.
+  -j <config-dir>  : Jog machine using config from directory.
+  -n <config-name> : Optional config name; otherwise derived from joystick name
+  -i <init-ms>     : Wait time for machine to initialize (default 20000)
+  -h               : Home on startup
+  -p <persist-file>: persist saved points in given file
+  -L <x,y,z>       : Machine limits in mm
+  -x <speed>       : feedrate for xy in mm/s
+  -z <speed>       : feedrate for z in mm/s
+  -s               : machine not connected; simulate.
+  -q               : Quiet. No chatter on stderr.
+```
 
 Joystick Configuration
 ----------------------
@@ -30,13 +34,14 @@ way, it is possible to have different configurations depending on the joystick
 name.
 
 The configuration asks you to move the X,Y,Z to their extreme values to learn
-which is your preferred axis. Also it asks you for the button you want to use
-as the 'home' button (typically there is some center button).
+which is your preferred joystick axis. Also it asks you for the button you
+want to use as the 'home' button (typically there is some center button).
 (All other buttons will be used to store and retrieve positions).
 
 Typically all USB gamepads either for PS3 or Xbox should work. On my beaglebone
-I found that the xpad kernel module was missing, so only a PS3 gamepad worked right
-out of the box. On my regular Linux notebook, both types worked right away.
+I found that the xpad kernel module was missing (this was in 2014, so might
+work by now), so only a PS3 gamepad worked right out of the box.
+On my regular Linux notebook, both types worked right away.
 
 Wire Up
 -------
@@ -45,7 +50,7 @@ machine, which means you need to 'wire up' this communication with the machine.
 For instance, if your machine is connected via a terminal line (very common),
 you can use `socat` to wire it up:
 
-    socat EXEC:"./machine-jog -j js-conf/ -x 120 -z 50 -h -p savedpoints.data" /dev/ttyACM0,raw,echo=0,b230400
+    socat EXEC:"./machine-jog -j js-conf/ -x 120 -z 50 -h -p savedpoints.data" /dev/ttyACM0,raw,echo=0,b115200
 
 This tells `socat` to execute the `machine-jog` binary with the joystick
 configuration and connect its stdin/stdout to the `/dev/ttyACM0` terminal
@@ -70,8 +75,9 @@ Should be fairly easy to add for someone who knows Python...)
 Use
 ---
 To move around, use the joysticks to manipulate x/y/z. The speed of movement is
-proportional to the deflection of the joystick. Hitting the limits of the machine
-is fed back with a short rumble (if supported by gamepad).
+proportional to the deflection of the joystick.
+Hitting the limits of the machine (if given with `-L`) is fed back with a
+short rumble (if supported by gamepad).
 
 To 'store' a current point in one of the six memory buttons, just do a
 long-press on the button (acknowledged by a short rumble). A short-press on

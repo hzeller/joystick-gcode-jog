@@ -25,6 +25,11 @@
 #include "joystick-config.h"
 #include "rumble.h"
 
+// Prusa uses 'W' to indicate that we don't want bed-levelling on G28.
+// If this results in a problem with other machines, remove the W0
+// Also, on GRBL machines, this would be "$H\n"
+#define HOMING_COMMAND "G28 W0\n"
+
 static const int kMaxFeedrate_xy = 120;
 static const int kMaxFeedrate_z = 10;  // Z is typically pretty slow
 static const int kRumbleTimeMs = 80;
@@ -37,7 +42,7 @@ static int max_feedrate_mm_p_sec_z;
 static const long interval_msec = 20;  // update interval between reads.
 
 // Flags.
-static int simulate_machine = 0;
+static bool simulate_machine = false;
 static bool quiet = false;  // quiet - don't print random stuff to screen
 
 static const char *persistent_store = NULL;  // filename to store memory points.
@@ -121,8 +126,8 @@ static int AwaitReadReady(int fd, int timeout_millis) {
     FD_SET(fd, &read_fds);
 
     struct timeval tv;
-    tv.tv_sec = 0;
-    tv.tv_usec = timeout_millis * 1000;
+    tv.tv_sec = timeout_millis / 1000;
+    tv.tv_usec = (timeout_millis % 1000) * 1000;
 
     FD_SET(fd, &read_fds);
     int s = select(fd + 1, &read_fds, NULL, NULL, &tv);
@@ -130,7 +135,7 @@ static int AwaitReadReady(int fd, int timeout_millis) {
     return tv.tv_usec / 1000;
 }
 
-static int ReadLine(int fd, char *result, int len, char do_echo) {
+static int ReadLine(int fd, char *result, int len, bool do_echo) {
     int bytes_read = 0;
     char c = 0;
     while (c != '\n' && c != '\r' && bytes_read < len) {
@@ -229,11 +234,11 @@ static int JoystickWaitForButton(int fd, int timeout_ms,
 
 // Discard all input until nothing is coming anymore within timeout. In
 // particular on first connect, this helps us to get into a clean state.
-static int DiscardAllInput(int timeout) {
+static int DiscardAllInput(int timeout_ms) {
     if (simulate_machine) return 0;
     int total_bytes = 0;
     char buf[128];
-    while (AwaitReadReady(gcode_in_fd, timeout) > 0) {
+    while (AwaitReadReady(gcode_in_fd, timeout_ms) > 0) {
         int r = read(gcode_in_fd, buf, sizeof(buf));
         if (r < 0) {
             perror("reading trouble");
@@ -252,20 +257,20 @@ static void WaitForOk() {
     if (simulate_machine) return;
     char buffer[512];
     for (;;) {
-        if (ReadLine(gcode_in_fd, buffer, sizeof(buffer), 0) < 0) break;
+        if (ReadLine(gcode_in_fd, buffer, sizeof(buffer), false) < 0) break;
         if (strncasecmp(buffer, "ok", 2) == 0) break;
     }
 }
 
 // Read coordinates from printer.
-static int GetCoordinates(struct Vector *pos) {
+static bool GetCoordinates(struct Vector *pos) {
     if (simulate_machine) return 1;
     DiscardAllInput(100);
 
     fprintf(gcode_out, "M114\n");  // read coordinates.
     if (!quiet) fprintf(stderr, "Reading initial absolute position\n");
     char buffer[512];
-    ReadLine(gcode_in_fd, buffer, sizeof(buffer), 1);
+    ReadLine(gcode_in_fd, buffer, sizeof(buffer), true);
     if (sscanf(buffer, "X:%f Y:%f Z:%f", &pos->axis[AXIS_X], &pos->axis[AXIS_Y],
                &pos->axis[AXIS_Z]) == 3) {
         WaitForOk();
@@ -273,19 +278,16 @@ static int GetCoordinates(struct Vector *pos) {
             fprintf(stderr, "Got machine pos (x/y/z) = (%.3f/%.3f/%.3f)\n",
                     pos->axis[AXIS_X], pos->axis[AXIS_Y], pos->axis[AXIS_Z]);
         }
-        return 1;
-    } else {
-        fprintf(stderr, "Didn't get readable coordinates.\n");
-        return 0;
+        return true;
     }
+    fprintf(stderr, "Didn't get readable coordinates: '%s'\n", buffer);
+    return false;
 }
 
 static time_t last_motor_on_time = 0;  // Quasi local state for motor move ops.
 static void GCodeHome() {
     if (simulate_machine) return;
-    fprintf(gcode_out, "G28 X0 Y0\n");
-    WaitForOk();
-    fprintf(gcode_out, "G28 Z0\n");
+    fprintf(gcode_out, HOMING_COMMAND);
     WaitForOk();
     last_motor_on_time = time(NULL);
 }
@@ -387,7 +389,26 @@ void HandlePlaceMemory(int b, struct Buttons *buttons, int *accumulated_timeout,
     }
 }
 
-void JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
+// Wait for the initial start-up of the machine and any initial
+// chatter to subside (usually after connect, the printer/CNC machine resets
+// and sends a bunch of configuration info before it is ready to start)
+static void WaitForMachineStartup(int timeout_ms) {
+    // Skip initial stuff coming from the machine. We need to have
+    // a defined starting way to read the absolute coordinates.
+    // Wait until board is initialized. Some Marlin versions dump some
+    // stuff out there which we want to ignore.
+    fprintf(gcode_out, "G21\n");  // Tickeling the serial line
+    if (!quiet) fprintf(stderr, "Wait for initialization [");
+    const int discarded = DiscardAllInput(timeout_ms);
+    if (!quiet) fprintf(stderr, "] done (discarded %d bytes).\n", discarded);
+    if (!quiet && discarded <= 0) {
+        fprintf(stderr,
+                "Mmmh, zero bytes is suspicious; we'd expect at least "
+                "some bytes. Serial line ok ?\n");
+    }
+}
+
+void JogMachine(int js_fd, bool do_homing, const struct Vector *machine_limit,
                 const struct Configuration *config) {
     struct Vector speed_vector;
     struct Vector machine_pos;
@@ -396,19 +417,6 @@ void JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
     struct Buttons *buttons = new_Buttons(config->highest_button + 1);
     ReadSavedPoints(persistent_store, buttons);
 
-    // Skip initial stuff coming from the machine. We need to have
-    // a defined starting way to read the absolute coordinates.
-    // Wait until board is initialized. Some Marlin versions dump some
-    // stuff out there which we want to ignore.
-    fprintf(gcode_out, "G21\n");  // Tickeling the serial line
-    if (!quiet) fprintf(stderr, "Clearing input [");
-    const int discarded = DiscardAllInput(8000);
-    if (!quiet) fprintf(stderr, "] done (discarded %d bytes).\n", discarded);
-    if (!quiet && discarded <= 0) {
-        fprintf(stderr,
-                "Mmmh, zero bytes is suspicious; we'd expect at least "
-                "some bytes. Serial line ok ?\n");
-    }
     fprintf(gcode_out, "G21\n");
     WaitForOk();  // Switch to metric.
 
@@ -431,6 +439,8 @@ void JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
         delete_Buttons(&buttons);
         return;
     }
+
+    fprintf(stderr, "Ready for Input\n");
 
     int64_t last_jog_time = 0;
     int accumulated_timeout = -1;
@@ -486,13 +496,16 @@ void JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
     delete_Buttons(&buttons);
 }
 
-static int usage(const char *progname) {
+static int usage(const char *progname, int initial_time) {
     fprintf(stderr,
             "Usage: %s <options>\n"
-            "  -C <config-dir>  : Create a configuration file for Joystick\n"
-            "  -j <config-dir>  : Jog machine using config\n"
+            "  -C <config-dir>  : Create a configuration file for Joystick, "
+            "then exit.\n"
+            "  -j <config-dir>  : Jog machine using config from directory.\n"
             "  -n <config-name> : Optional config name; otherwise derived from "
             "joystick name\n"
+            "  -i <init-ms>     : Wait time for machine to initialize "
+            "(default %d)\n"
             "  -h               : Home on startup\n"
             "  -p <persist-file>: persist saved points in given file\n"
             "  -L <x,y,z>       : Machine limits in mm\n"
@@ -500,14 +513,14 @@ static int usage(const char *progname) {
             "  -z <speed>       : feedrate for z in mm/s\n"
             "  -s               : machine not connected; simulate.\n"
             "  -q               : Quiet. No chatter on stderr.\n",
-            progname);
+            progname, initial_time);
     return 1;
 }
 
 int main(int argc, char **argv) {
     max_feedrate_mm_p_sec_xy = kMaxFeedrate_xy;
     max_feedrate_mm_p_sec_z = kMaxFeedrate_z;
-    char do_homing = 0;
+    bool do_homing = false;
     struct Configuration config;
     memset(&config, 0, sizeof(config));
     struct Vector machine_limits;
@@ -519,8 +532,10 @@ int main(int argc, char **argv) {
     char joystick_name[512];
     memset(joystick_name, 0, sizeof(joystick_name));
 
+    int startup_wait_ms = 20000;
+
     int opt;
-    while ((opt = getopt(argc, argv, "C:j:x:z:L:hsp:q:n:")) != -1) {
+    while ((opt = getopt(argc, argv, "C:j:x:z:L:hsp:q:n:i:")) != -1) {
         switch (opt) {
         case 'C':
             op = DO_CREATE_CONFIG;
@@ -531,28 +546,31 @@ int main(int argc, char **argv) {
             strncpy(joystick_name, optarg, sizeof(joystick_name) - 1);
             break;
 
-        case 'h': do_homing = 1; break;
+        case 'h': do_homing = true; break;
 
-        case 's': simulate_machine = 1; break;
+        case 's': simulate_machine = true; break;
 
         case 'q': quiet = true; break;
 
         case 'p': persistent_store = strdup(optarg); break;
+
+        case 'i': startup_wait_ms = atoi(optarg); break;
 
         case 'x':
             max_feedrate_mm_p_sec_xy = atoi(optarg);
             if (max_feedrate_mm_p_sec_xy <= 1) {
                 fprintf(stderr, "Peculiar value -x %d",
                         max_feedrate_mm_p_sec_xy);
-                return usage(argv[0]);
+                return usage(argv[0], startup_wait_ms);
             }
             break;
 
         case 'L':
+            // TODO: is there a gcode we can query ?
             if (3 != sscanf(optarg, "%f,%f,%f", &machine_limits.axis[AXIS_X],
                             &machine_limits.axis[AXIS_Z],
                             &machine_limits.axis[AXIS_Z])) {
-                return usage(argv[0]);
+                return usage(argv[0], startup_wait_ms);
             }
             break;
 
@@ -561,7 +579,7 @@ int main(int argc, char **argv) {
             if (max_feedrate_mm_p_sec_z <= 1) {
                 fprintf(stderr, "Peculiar value -z %d",
                         max_feedrate_mm_p_sec_z);
-                return usage(argv[0]);
+                return usage(argv[0], startup_wait_ms);
             }
             break;
 
@@ -570,11 +588,11 @@ int main(int argc, char **argv) {
             config_dir = strdup(optarg);
             break;
 
-        default: /* '?' */ return usage(argv[0]);
+        default: /* '?' */ return usage(argv[0], startup_wait_ms);
         }
     }
 
-    if (op == DO_NOTHING) return usage(argv[0]);
+    if (op == DO_NOTHING) return usage(argv[0], startup_wait_ms);
 
     // Connection to the machine reading gcode. TODO: maybe provide
     // listening on a socket ?
@@ -623,6 +641,7 @@ int main(int argc, char **argv) {
         }
         JoystickInitialState(js_fd, &config);
         JoystickRumbleInit(kJoystickId);
+        WaitForMachineStartup(startup_wait_ms);
         JogMachine(js_fd, do_homing, &machine_limits, &config);
     }
 
