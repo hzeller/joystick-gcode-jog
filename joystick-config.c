@@ -33,10 +33,8 @@ void WriteConfig(const char *config_dir, const char *js_name,
     FILE *out = fopen(filename, "w");
     if (out == NULL) return;
     for (int i = 0; i < NUM_AXIS; ++i) {
-        fprintf(out, "A:%d %d %d\n",
-                config->axis_config[i].channel,
-                config->axis_config[i].zero,
-                config->axis_config[i].max_value);
+        fprintf(out, "A:%d %d %d\n", config->axis_config[i].channel,
+                config->axis_config[i].zero, config->axis_config[i].max_value);
     }
     fprintf(out, "B:%d\n", config->home_button);
     fclose(out);
@@ -49,17 +47,15 @@ int ReadConfig(const char *config_dir, const char *js_name,
     if (!AssembleFilename(config_dir, js_name, filename, sizeof(filename)))
         return 0;
     FILE *in = fopen(filename, "r");
-    if (in == NULL)
-        return 0;
+    if (in == NULL) return 0;
     for (int i = 0; i < NUM_AXIS; ++i) {
-        if (3 != fscanf(in, "A:%d %d %d\n",
-                        &config->axis_config[i].channel,
+        if (3 != fscanf(in, "A:%d %d %d\n", &config->axis_config[i].channel,
                         &config->axis_config[i].zero,
-                        &config->axis_config[i].max_value))
+                        &config->axis_config[i].max_value)) {
             return 0;
+        }
     }
-    if (1 != fscanf(in, "B:%d\n", &config->home_button))
-        return 0;
+    if (1 != fscanf(in, "B:%d\n", &config->home_button)) return 0;
     fclose(in);
     return 1;
 }
@@ -67,16 +63,14 @@ int ReadConfig(const char *config_dir, const char *js_name,
 static int64_t GetMillis() {
     struct timeval tv;
     gettimeofday(&tv, NULL);
-    return (int64_t) tv.tv_sec * 1000LL + tv.tv_usec / 1000;
+    return (int64_t)tv.tv_sec * 1000LL + tv.tv_usec / 1000;
 }
 
 static void FindLargestAxis(int js_fd, struct AxisConfig *axis_config) {
     struct js_event e;
     for (;;) {
-        if (JoystickWaitForEvent(js_fd, &e, 1000) <= 0)
-            continue;
-        if (e.type == JS_EVENT_AXIS
-            && abs(e.value) > 32000) {
+        if (JoystickWaitForEvent(js_fd, &e, 1000) <= 0) continue;
+        if (e.type == JS_EVENT_AXIS && abs(e.value) > 32000) {
             axis_config->channel = e.number;
             axis_config->max_value = (e.value < 0 ? -1 : 1) * 32767;
             return;
@@ -88,10 +82,9 @@ static void WaitForReleaseAxis(int js_fd, int channel, int *zero) {
     int zero_value = 1 << 17;
     struct js_event e;
     for (;;) {
-        if (JoystickWaitForEvent(js_fd, &e, 1000) <= 0)
-            continue;
-        if (e.type == JS_EVENT_AXIS && e.number == channel
-            && abs(e.value) < 5000) {
+        if (JoystickWaitForEvent(js_fd, &e, 1000) <= 0) continue;
+        if (e.type == JS_EVENT_AXIS && e.number == channel &&
+            abs(e.value) < 5000) {
             zero_value = e.value;
             break;
         }
@@ -100,8 +93,7 @@ static void WaitForReleaseAxis(int js_fd, int channel, int *zero) {
     // is the 'zero' position.
     const int64_t end_time = GetMillis() + 100;
     while (GetMillis() < end_time) {
-        if (JoystickWaitForEvent(js_fd, &e, 100) <= 0)
-            continue;
+        if (JoystickWaitForEvent(js_fd, &e, 100) <= 0) continue;
         if (e.type == JS_EVENT_AXIS && e.number == channel) {
             zero_value = e.value;
         }
@@ -112,8 +104,7 @@ static void WaitForReleaseAxis(int js_fd, int channel, int *zero) {
 static void WaitAnyButtonPress(int js_fd, int *button_channel) {
     struct js_event e;
     for (;;) {
-        if (JoystickWaitForEvent(js_fd, &e, 1000) <= 0)
-            continue;
+        if (JoystickWaitForEvent(js_fd, &e, 1000) <= 0) continue;
         if (e.type == JS_EVENT_BUTTON && e.value > 0) {
             *button_channel = e.number;
             return;
@@ -124,25 +115,27 @@ static void WaitAnyButtonPress(int js_fd, int *button_channel) {
 static void WaitForButtonRelease(int js_fd, int channel) {
     struct js_event e;
     for (;;) {
-        if (JoystickWaitForEvent(js_fd, &e, 1000) <= 0)
-            continue;
+        if (JoystickWaitForEvent(js_fd, &e, 1000) <= 0) continue;
         if (e.type == JS_EVENT_BUTTON && e.number == channel && e.value == 0)
             return;
     }
 }
 
-static void GetAxisConfig(int js_fd,
-                          const char *msg, struct AxisConfig *axis_config) {
-    fprintf(stderr, "%s", msg); fflush(stderr);
+static void GetAxisConfig(int js_fd, const char *msg,
+                          struct AxisConfig *axis_config) {
+    fprintf(stderr, "%s", msg);
+    fflush(stderr);
     FindLargestAxis(js_fd, axis_config);
     fprintf(stderr, "Thanks. Move back to center.\n");
     WaitForReleaseAxis(js_fd, axis_config->channel, &axis_config->zero);
 }
 
 static void GetButtonConfig(int js_fd, const char *msg, int *channel) {
-    fprintf(stderr, "%s", msg); fflush(stderr);
+    fprintf(stderr, "%s", msg);
+    fflush(stderr);
     WaitAnyButtonPress(js_fd, channel);
-    fprintf(stderr, "Thanks. Now release."); fflush(stderr);
+    fprintf(stderr, "Thanks. Now release.");
+    fflush(stderr);
     WaitForButtonRelease(js_fd, *channel);
     fprintf(stderr, "\n");
 }

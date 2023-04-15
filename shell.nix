@@ -7,5 +7,6 @@ pkgs.mkShell {
   buildInputs = with pkgs;
     [
       socat
+      clang-tools  # clang-format
     ];
 }

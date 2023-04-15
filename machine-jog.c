@@ -2,24 +2,26 @@
  * (c) 2014 Henner Zeller <h.zeller@acm.org>
  */
 
+#include "machine-jog.h"
+
 #include <assert.h>
 #include <ctype.h>
 #include <fcntl.h>
 #include <getopt.h>
 #include <linux/joystick.h>
 #include <math.h>
-#include <stdio.h>
+#include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include <sys/select.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <unistd.h>
 #include <time.h>
+#include <unistd.h>
 
-#include "machine-jog.h"
 #include "joystick-config.h"
 #include "rumble.h"
 
@@ -32,11 +34,11 @@ static const int kMotorTimeoutSeconds = 5;
 static int max_feedrate_mm_p_sec_xy;
 static int max_feedrate_mm_p_sec_z;
 
-static const long interval_msec = 20;   // update interval between reads.
+static const long interval_msec = 20;  // update interval between reads.
 
 // Flags.
 static int simulate_machine = 0;
-static int quiet = 0;   // quiet - don't print random stuff to screen
+static bool quiet = false;  // quiet - don't print random stuff to screen
 
 static const char *persistent_store = NULL;  // filename to store memory points.
 
@@ -55,13 +57,12 @@ struct ButtonState {
 };
 struct Buttons {
     int count;
-    struct ButtonState state[0]; // trick for easy memory allocation.
+    struct ButtonState state[0];  // trick for easy memory allocation.
 };
 
-static struct Buttons* new_Buttons(int n) {
-    struct Buttons* result
-        = (struct Buttons*) malloc(sizeof(struct Buttons)
-                                   + n * sizeof(struct ButtonState));
+static struct Buttons *new_Buttons(int n) {
+    struct Buttons *result = (struct Buttons *)malloc(
+      sizeof(struct Buttons) + n * sizeof(struct ButtonState));
     result->count = n;
     for (int i = 0; i < n; ++i) {
         result->state[i].is_pressed = 0;
@@ -74,16 +75,13 @@ static void delete_Buttons(struct Buttons **b) {
     *b = NULL;
 }
 
-static int quantize(int value, int q) {
-    return value / q * q;
-}
+static int quantize(int value, int q) { return value / q * q; }
 
 void WriteSavedPoints(const char *filename, struct Buttons *buttons) {
     if (filename == NULL) return;
     FILE *out = fopen(filename, "w");  // Overwriting for now. TODO: tmp file.
     for (int i = 0; i < buttons->count; ++i) {
-        if (buttons->state[i].stored.axis[AXIS_X] < 0)
-            continue;
+        if (buttons->state[i].stored.axis[AXIS_X] < 0) continue;
         fprintf(out, "%2d: %7.2f %7.2f %7.2f\n", i,
                 buttons->state[i].stored.axis[AXIS_X],
                 buttons->state[i].stored.axis[AXIS_Y],
@@ -98,11 +96,9 @@ void ReadSavedPoints(const char *filename, struct Buttons *buttons) {
     if (in == NULL) return;
     int b;
     struct Vector vec;
-    while (4 == fscanf(in, "%d: %f %f %f\n",
-                       &b, &vec.axis[AXIS_X], &vec.axis[AXIS_Y],
-                       &vec.axis[AXIS_Z])) {
-        if (b < 0 || b >= buttons->count)
-            continue;
+    while (4 == fscanf(in, "%d: %f %f %f\n", &b, &vec.axis[AXIS_X],
+                       &vec.axis[AXIS_Y], &vec.axis[AXIS_Z])) {
+        if (b < 0 || b >= buttons->count) continue;
         buttons->state[b].stored = vec;
     }
     fclose(in);
@@ -111,7 +107,7 @@ void ReadSavedPoints(const char *filename, struct Buttons *buttons) {
 static int64_t get_time_millis() {
     struct timeval tval;
     gettimeofday(&tval, NULL);
-    return (int64_t) tval.tv_sec * 1000 + tval.tv_usec / 1000;
+    return (int64_t)tval.tv_sec * 1000 + tval.tv_usec / 1000;
 }
 
 // Wait for input to become ready for read or timeout reached.
@@ -130,8 +126,7 @@ static int AwaitReadReady(int fd, int timeout_millis) {
 
     FD_SET(fd, &read_fds);
     int s = select(fd + 1, &read_fds, NULL, NULL, &tv);
-    if (s < 0)
-        return -1;
+    if (s < 0) return -1;
     return tv.tv_usec / 1000;
 }
 
@@ -139,11 +134,10 @@ static int ReadLine(int fd, char *result, int len, char do_echo) {
     int bytes_read = 0;
     char c = 0;
     while (c != '\n' && c != '\r' && bytes_read < len) {
-        if (read(fd, &c, 1) < 0)
-            return -1;
+        if (read(fd, &c, 1) < 0) return -1;
         ++bytes_read;
         *result++ = c;
-        if (do_echo && !quiet && write(STDERR_FILENO, &c, 1) < 0) { // echo
+        if (do_echo && !quiet && write(STDERR_FILENO, &c, 1) < 0) {  // echo
             perror("echo failed");
         }
     }
@@ -168,15 +162,15 @@ static void JoystickInitialState(int js_fd, struct Configuration *config) {
     config->highest_button = -1;
     // The initial state is sent on connect.
     while (JoystickWaitForEvent(js_fd, &e, 50) > 0) {
-        if ((e.type & JS_EVENT_INIT) == 0)
-            break;  // done init events.
+        if ((e.type & JS_EVENT_INIT) == 0) break;  // done init events.
         if ((e.type & JS_EVENT_AXIS) != 0) {
             // read zero position.
             for (int a = 0; a < NUM_AXIS; ++a) {
                 if (config->axis_config[a].channel == e.number) {
                     config->axis_config[a].zero = e.value;
-                    if (!quiet) fprintf(stderr, "Zero axis %d : %d\n",
-                                        a, e.value);
+                    if (!quiet) {
+                        fprintf(stderr, "Zero axis %d : %d\n", a, e.value);
+                    }
                 }
             }
         }
@@ -200,8 +194,7 @@ enum EventOutput {
 // return before the timeout, as this does not require immediate attention.
 static int JoystickWaitForButton(int fd, int timeout_ms,
                                  const struct Configuration *config,
-                                 struct Vector *axis,
-                                 struct Buttons *buttons) {
+                                 struct Vector *axis, struct Buttons *buttons) {
     int timeout_left = timeout_ms;
     for (;;) {
         struct js_event e;
@@ -218,8 +211,8 @@ static int JoystickWaitForButton(int fd, int timeout_ms,
                 if (config->axis_config[a].channel == e.number) {
                     int normalized = e.value - config->axis_config[a].zero;
                     int quant = abs(config->axis_config[a].max_value / 16);
-                    axis->axis[a] = (quantize(normalized, quant) *
-                                     1.0 / config->axis_config[a].max_value);
+                    axis->axis[a] = (quantize(normalized, quant) * 1.0 /
+                                     config->axis_config[a].max_value);
                 }
             }
         } else if (e.type == JS_EVENT_BUTTON) {
@@ -228,7 +221,7 @@ static int JoystickWaitForButton(int fd, int timeout_ms,
                 if (e.number == config->home_button)
                     return JS_HOME_BUTTON;  // special button.
                 else
-                    return e.number;        // generic store button.
+                    return e.number;  // generic store button.
             }
         }
     }
@@ -247,7 +240,7 @@ static int DiscardAllInput(int timeout) {
             return -1;
         }
         total_bytes += r;
-        if (!quiet && r > 0 && write(STDERR_FILENO, buf, r) < 0) { // echo back.
+        if (!quiet && r > 0 && write(STDERR_FILENO, buf, r) < 0) {  // echo
             perror("echo failed");
         }
     }
@@ -259,30 +252,27 @@ static void WaitForOk() {
     if (simulate_machine) return;
     char buffer[512];
     for (;;) {
-        if (ReadLine(gcode_in_fd, buffer, sizeof(buffer), 0) < 0)
-            break;
-        if (strncasecmp(buffer, "ok", 2) == 0)
-            break;
+        if (ReadLine(gcode_in_fd, buffer, sizeof(buffer), 0) < 0) break;
+        if (strncasecmp(buffer, "ok", 2) == 0) break;
     }
 }
-
 
 // Read coordinates from printer.
 static int GetCoordinates(struct Vector *pos) {
     if (simulate_machine) return 1;
     DiscardAllInput(100);
 
-    fprintf(gcode_out, "M114\n"); // read coordinates.
+    fprintf(gcode_out, "M114\n");  // read coordinates.
     if (!quiet) fprintf(stderr, "Reading initial absolute position\n");
     char buffer[512];
     ReadLine(gcode_in_fd, buffer, sizeof(buffer), 1);
     if (sscanf(buffer, "X:%f Y:%f Z:%f", &pos->axis[AXIS_X], &pos->axis[AXIS_Y],
                &pos->axis[AXIS_Z]) == 3) {
         WaitForOk();
-        if (!quiet) fprintf(stderr, "Got machine pos (x/y/z) "
-                            "= (%.3f/%.3f/%.3f)\n",
-                            pos->axis[AXIS_X], pos->axis[AXIS_Y],
-                            pos->axis[AXIS_Z]);
+        if (!quiet) {
+            fprintf(stderr, "Got machine pos (x/y/z) = (%.3f/%.3f/%.3f)\n",
+                    pos->axis[AXIS_X], pos->axis[AXIS_Y], pos->axis[AXIS_Z]);
+        }
         return 1;
     } else {
         fprintf(stderr, "Didn't get readable coordinates.\n");
@@ -290,61 +280,61 @@ static int GetCoordinates(struct Vector *pos) {
     }
 }
 
-static time_t last_motor_on_time = 0;   // Quasi local state for motor move ops.
+static time_t last_motor_on_time = 0;  // Quasi local state for motor move ops.
 static void GCodeHome() {
     if (simulate_machine) return;
-    fprintf(gcode_out, "G28 X0 Y0\n"); WaitForOk();
-    fprintf(gcode_out, "G28 Z0\n"); WaitForOk();
+    fprintf(gcode_out, "G28 X0 Y0\n");
+    WaitForOk();
+    fprintf(gcode_out, "G28 Z0\n");
+    WaitForOk();
     last_motor_on_time = time(NULL);
 }
 
 static void GCodeGoto(struct Vector *pos, float feedrate_mm_sec) {
     if (simulate_machine) return;
-    fprintf(gcode_out, "G1 X%.3f Y%.3f Z%.3f F%.3f\n",
-            pos->axis[AXIS_X], pos->axis[AXIS_Y], pos->axis[AXIS_Z],
-            feedrate_mm_sec * 60);
+    fprintf(gcode_out, "G1 X%.3f Y%.3f Z%.3f F%.3f\n", pos->axis[AXIS_X],
+            pos->axis[AXIS_Y], pos->axis[AXIS_Z], feedrate_mm_sec * 60);
     WaitForOk();
     last_motor_on_time = time(NULL);
 }
 
 static void GCodeEnsureMotorOff() {
     if (last_motor_on_time) {
-        fprintf(gcode_out, "M84\n"); WaitForOk();
+        fprintf(gcode_out, "M84\n");
+        WaitForOk();
         last_motor_on_time = 0;
     }
 }
 
 // Switch motor off if it has been idle for kMotorTimeoutSeconds
 static void CheckMotorTimeout() {
-    if (last_motor_on_time > 0
-        && time(NULL) - last_motor_on_time > kMotorTimeoutSeconds) {
+    if (last_motor_on_time > 0 &&
+        time(NULL) - last_motor_on_time > kMotorTimeoutSeconds) {
         GCodeEnsureMotorOff();
     }
 }
 
 // Returns 1 if any gcode has been output or 0 if there was no need.
-int OutputJogGCode(int64_t interval_ms,
-                   struct Vector *pos, const struct Vector *speed,
-                   const struct Vector *limit) {
+int OutputJogGCode(int64_t interval_ms, struct Vector *pos,
+                   const struct Vector *speed, const struct Vector *limit) {
     // We get the timeout in regular intervals.
-    const float euklid = sqrtf(speed->axis[AXIS_X] * speed->axis[AXIS_X]
-                                + speed->axis[AXIS_Y] * speed->axis[AXIS_Y]
-                                + speed->axis[AXIS_Z] * speed->axis[AXIS_Z]);
+    const float euklid = sqrtf(speed->axis[AXIS_X] * speed->axis[AXIS_X] +
+                               speed->axis[AXIS_Y] * speed->axis[AXIS_Y] +
+                               speed->axis[AXIS_Z] * speed->axis[AXIS_Z]);
 
-    const float feedrate = euklid * ((fabs(speed->axis[AXIS_Z]) > 0.01)
-                                    ? max_feedrate_mm_p_sec_z
-                                    : max_feedrate_mm_p_sec_xy);
-    if (fabs(feedrate) < 0.1)
-        return 0;
+    const float feedrate =
+      euklid * ((fabs(speed->axis[AXIS_Z]) > 0.01) ? max_feedrate_mm_p_sec_z
+                                                   : max_feedrate_mm_p_sec_xy);
+    if (fabs(feedrate) < 0.1) return 0;
 
     // The interval_ms is empirically how long it took since the
     // last update.
     if (interval_ms > 100) interval_ms = 100;
     const float interval = interval_ms / 1000.0;
-    char do_rumble = 0;
+    bool do_rumble = false;
     for (int a = AXIS_X; a < NUM_AXIS; ++a) {
-        const char at_limit_before
-            = pos->axis[a] <= 0 || pos->axis[a] >= limit->axis[a];
+        const char at_limit_before =
+          pos->axis[a] <= 0 || pos->axis[a] >= limit->axis[a];
         pos->axis[a] = pos->axis[a] + speed->axis[a] * feedrate * interval;
         if (pos->axis[a] < 0) {
             pos->axis[a] = 0;
@@ -356,15 +346,15 @@ int OutputJogGCode(int64_t interval_ms,
         }
     }
     GCodeGoto(pos, feedrate);
-    if (!quiet) fprintf(stderr, "Goto (x/y/z) = (%.2f/%.2f/%.2f)      \r",
-                        pos->axis[AXIS_X], pos->axis[AXIS_Y], pos->axis[AXIS_Z]);
-    if (do_rumble)
-        JoystickRumble(kRumbleTimeMs);
+    if (!quiet) {
+        fprintf(stderr, "Goto (x/y/z) = (%.2f/%.2f/%.2f)      \r",
+                pos->axis[AXIS_X], pos->axis[AXIS_Y], pos->axis[AXIS_Z]);
+    }
+    if (do_rumble) JoystickRumble(kRumbleTimeMs);
     return 1;
 }
 
-void HandlePlaceMemory(int b, struct Buttons *buttons,
-                       int *accumulated_timeout,
+void HandlePlaceMemory(int b, struct Buttons *buttons, int *accumulated_timeout,
                        struct Vector *machine_pos) {
     struct Vector *storage = &buttons->state[b].stored;
     if (buttons->state[b].is_pressed) {
@@ -374,20 +364,20 @@ void HandlePlaceMemory(int b, struct Buttons *buttons,
             *storage = *machine_pos;  // save
             WriteSavedPoints(persistent_store, buttons);
             JoystickRumble(kRumbleTimeMs);  // Feedback that it is stored now.
-            if (!quiet) fprintf(stderr, "\nStored in %d (%.2f, %.2f, %.2f)\n",
-                                b,
-                                machine_pos->axis[AXIS_X],
-                                machine_pos->axis[AXIS_Y],
-                                machine_pos->axis[AXIS_Z]);
+            if (!quiet) {
+                fprintf(stderr, "\nStored in %d (%.2f, %.2f, %.2f)\n", b,
+                        machine_pos->axis[AXIS_X], machine_pos->axis[AXIS_Y],
+                        machine_pos->axis[AXIS_Z]);
+            }
         } else {
             if (storage->axis[AXIS_X] >= 0) {
                 *machine_pos = *storage;
-                if (!quiet) fprintf(stderr,
-                                    "\nGoto position %d -> (%.2f, %.2f, %.2f)\n",
-                                    b,
-                                    machine_pos->axis[AXIS_X],
-                                    machine_pos->axis[AXIS_Y],
-                                    machine_pos->axis[AXIS_Z]);
+                if (!quiet) {
+                    fprintf(
+                      stderr, "\nGoto position %d -> (%.2f, %.2f, %.2f)\n", b,
+                      machine_pos->axis[AXIS_X], machine_pos->axis[AXIS_Y],
+                      machine_pos->axis[AXIS_Z]);
+                }
                 GCodeGoto(machine_pos, max_feedrate_mm_p_sec_xy);
             } else {
                 if (!quiet) fprintf(stderr, "\nButton %d undefined\n", b);
@@ -398,7 +388,7 @@ void HandlePlaceMemory(int b, struct Buttons *buttons,
 }
 
 void JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
-               const struct Configuration *config) {
+                const struct Configuration *config) {
     struct Vector speed_vector;
     struct Vector machine_pos;
     memset(&speed_vector, 0, sizeof(speed_vector));
@@ -415,10 +405,12 @@ void JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
     const int discarded = DiscardAllInput(8000);
     if (!quiet) fprintf(stderr, "] done (discarded %d bytes).\n", discarded);
     if (!quiet && discarded <= 0) {
-        fprintf(stderr, "Mmmh, zero bytes is suspicious; we'd expect at least "
+        fprintf(stderr,
+                "Mmmh, zero bytes is suspicious; we'd expect at least "
                 "some bytes. Serial line ok ?\n");
     }
-    fprintf(gcode_out, "G21\n"); WaitForOk();  // Switch to metric.
+    fprintf(gcode_out, "G21\n");
+    WaitForOk();  // Switch to metric.
 
     char is_homed = 0;
 
@@ -432,26 +424,30 @@ void JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
     // Relative mode (G91) seems to be pretty badly implemented and does not
     // deal with very small increments (which are rounded away).
     // So let's be absolute and keep track of the current position ourself.
-    fprintf(gcode_out, "G90\n"); WaitForOk();  // Absolute coordinates.
+    fprintf(gcode_out, "G90\n");
+    WaitForOk();  // Absolute coordinates.
 
-    if (!GetCoordinates(&machine_pos))
+    if (!GetCoordinates(&machine_pos)) {
+        delete_Buttons(&buttons);
         return;
+    }
 
     int64_t last_jog_time = 0;
     int accumulated_timeout = -1;
     int last_button_ev = 0;
-    int done = 0;
+    bool done = false;
     while (!done) {
-        int button_ev = JoystickWaitForButton(js_fd, interval_msec,
-                                              config, &speed_vector, buttons);
+        int button_ev = JoystickWaitForButton(js_fd, interval_msec, config,
+                                              &speed_vector, buttons);
         switch (button_ev) {
         case JS_READ_ERROR:
             if (!quiet) fprintf(stderr, "Joystick unplugged\n");
             GCodeEnsureMotorOff();
-            done = 1;
+            done = true;
             break;
 
-        case JS_REACHED_TIMEOUT: { // timeout, i.e. our regular update interval.
+        case JS_REACHED_TIMEOUT: {  // timeout, i.e. our regular update
+                                    // interval.
             if (accumulated_timeout >= 0) {
                 accumulated_timeout += interval_msec;
                 if (accumulated_timeout > 500) {  // auto-release long press.
@@ -462,29 +458,27 @@ void JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
                 }
             }
             const int64_t now = get_time_millis();
-            if (OutputJogGCode(now - last_jog_time,
-                               &machine_pos, &speed_vector, machine_limit)) {
+            if (OutputJogGCode(now - last_jog_time, &machine_pos, &speed_vector,
+                               machine_limit)) {
                 // We did emit some gcode. Now we're not homed anymore
                 is_homed = 0;
                 last_jog_time = now;
             } else {
                 CheckMotorTimeout();
             }
-        }
-            break;
+        } break;
 
         case JS_HOME_BUTTON:  // only home if not already.
             if (buttons->state[config->home_button].is_pressed && !is_homed) {
                 is_homed = 1;
                 GCodeHome();
-                if (!GetCoordinates(&machine_pos))
-                    done = 1;
+                if (!GetCoordinates(&machine_pos)) done = true;
             }
             break;
 
         default:
-            HandlePlaceMemory(button_ev, buttons,
-                              &accumulated_timeout, &machine_pos);
+            HandlePlaceMemory(button_ev, buttons, &accumulated_timeout,
+                              &machine_pos);
             last_button_ev = button_ev;
             break;
         }
@@ -493,7 +487,8 @@ void JogMachine(int js_fd, char do_homing, const struct Vector *machine_limit,
 }
 
 static int usage(const char *progname) {
-    fprintf(stderr, "Usage: %s <options>\n"
+    fprintf(stderr,
+            "Usage: %s <options>\n"
             "  -C <config-dir>  : Create a configuration file for Joystick\n"
             "  -j <config-dir>  : Jog machine using config\n"
             "  -n <config-name> : Optional config name; otherwise derived from "
@@ -511,20 +506,15 @@ static int usage(const char *progname) {
 
 int main(int argc, char **argv) {
     max_feedrate_mm_p_sec_xy = kMaxFeedrate_xy;
-    max_feedrate_mm_p_sec_z  = kMaxFeedrate_z;
+    max_feedrate_mm_p_sec_z = kMaxFeedrate_z;
     char do_homing = 0;
     struct Configuration config;
     memset(&config, 0, sizeof(config));
     struct Vector machine_limits;
-    machine_limits.axis[AXIS_X]
-        = machine_limits.axis[AXIS_Y]
-        = machine_limits.axis[AXIS_Z] = 305;
+    machine_limits.axis[AXIS_X] = machine_limits.axis[AXIS_Y] =
+      machine_limits.axis[AXIS_Z] = 305;
 
-    enum Operation {
-        DO_NOTHING,
-        DO_CREATE_CONFIG,
-        DO_JOG
-    } op = DO_NOTHING;
+    enum Operation { DO_NOTHING, DO_CREATE_CONFIG, DO_JOG } op = DO_NOTHING;
     const char *config_dir = NULL;
     char joystick_name[512];
     memset(joystick_name, 0, sizeof(joystick_name));
@@ -541,21 +531,13 @@ int main(int argc, char **argv) {
             strncpy(joystick_name, optarg, sizeof(joystick_name) - 1);
             break;
 
-        case 'h':
-            do_homing = 1;
-            break;
+        case 'h': do_homing = 1; break;
 
-        case 's':
-            simulate_machine = 1;
-            break;
+        case 's': simulate_machine = 1; break;
 
-        case 'q':
-            quiet = 1;
-            break;
+        case 'q': quiet = true; break;
 
-        case 'p':
-            persistent_store = strdup(optarg);
-            break;
+        case 'p': persistent_store = strdup(optarg); break;
 
         case 'x':
             max_feedrate_mm_p_sec_xy = atoi(optarg);
@@ -567,11 +549,11 @@ int main(int argc, char **argv) {
             break;
 
         case 'L':
-            if (3 != sscanf(optarg, "%f,%f,%f",
-                            &machine_limits.axis[AXIS_X],
+            if (3 != sscanf(optarg, "%f,%f,%f", &machine_limits.axis[AXIS_X],
                             &machine_limits.axis[AXIS_Z],
-                            &machine_limits.axis[AXIS_Z]))
+                            &machine_limits.axis[AXIS_Z])) {
                 return usage(argv[0]);
+            }
             break;
 
         case 'z':
@@ -588,13 +570,11 @@ int main(int argc, char **argv) {
             config_dir = strdup(optarg);
             break;
 
-        default: /* '?' */
-            return usage(argv[0]);
+        default: /* '?' */ return usage(argv[0]);
         }
     }
 
-    if (op == DO_NOTHING)
-        return usage(argv[0]);
+    if (op == DO_NOTHING) return usage(argv[0]);
 
     // Connection to the machine reading gcode. TODO: maybe provide
     // listening on a socket ?
@@ -606,12 +586,14 @@ int main(int argc, char **argv) {
     // immediately.
     setvbuf(stderr, NULL, _IONBF, 0);
 
+    const int kJoystickId = 0;  // TODO: make configurable ?
+
     // The Joystick. The first time we open it, the zero values are not
     // yet properly established. So let's close the first instance right awawy
     // and use the next open :)
     // TODO: maybe not hardcode the joystick number. For now, expect it to be 0
-    close(open("/dev/input/js0", O_RDONLY));
-    const int js_fd = open("/dev/input/js0", O_RDONLY);
+    close(open("/dev/input/js0", O_RDONLY));             // kJoystickId
+    const int js_fd = open("/dev/input/js0", O_RDONLY);  // kJoystickId
     if (js_fd < 0) {
         perror("Opening joystick");
         return 1;
@@ -625,20 +607,22 @@ int main(int argc, char **argv) {
             if (isspace(*x)) *x = '-';
         }
     }
-    if (!quiet) fprintf(stderr, "joystick configuration name: %s\n",
-                        joystick_name);
-
+    if (!quiet) {
+        fprintf(stderr, "joystick configuration name: %s\n", joystick_name);
+    }
     if (op == DO_CREATE_CONFIG) {
         CreateConfig(js_fd, &config);
         WriteConfig(config_dir, joystick_name, &config);
     } else if (op == DO_JOG) {
         if (ReadConfig(config_dir, joystick_name, &config) == 0) {
-            fprintf(stderr, "Problem reading joystick config file.\n"
-                    "Create a fresh one with\n\t%s -C %s\n", argv[0], config_dir);
+            fprintf(stderr,
+                    "Problem reading joystick config file.\n"
+                    "Create a fresh one with\n\t%s -C %s\n",
+                    argv[0], config_dir);
             return 1;
         }
         JoystickInitialState(js_fd, &config);
-        JoystickRumbleInit(0);
+        JoystickRumbleInit(kJoystickId);
         JogMachine(js_fd, do_homing, &machine_limits, &config);
     }
 

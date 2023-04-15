@@ -6,14 +6,9 @@
 #define MACHINE_JOG_H
 
 // Axes we are interested in.
-enum Axis {
-    AXIS_X,
-    AXIS_Y,
-    AXIS_Z,
-    NUM_AXIS
-};
+enum Axis { AXIS_X, AXIS_Y, AXIS_Z, NUM_AXIS };
 
 struct js_event;
 int JoystickWaitForEvent(int fd, struct js_event *event, int timeout_ms);
 
-#endif // MACHINE_JOG_H
+#endif  // MACHINE_JOG_H
