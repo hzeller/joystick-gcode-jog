@@ -143,7 +143,9 @@ static int ReadLine(int fd, char *result, int len, char do_echo) {
             return -1;
         ++bytes_read;
         *result++ = c;
-        if (do_echo && !quiet) write(STDERR_FILENO, &c, 1);  // echo back.
+        if (do_echo && !quiet && write(STDERR_FILENO, &c, 1) < 0) { // echo
+            perror("echo failed");
+        }
     }
     *result = '\0';
     return bytes_read;
@@ -245,7 +247,9 @@ static int DiscardAllInput(int timeout) {
             return -1;
         }
         total_bytes += r;
-        if (!quiet && r > 0) write(STDERR_FILENO, buf, r);  // echo back.
+        if (!quiet && r > 0 && write(STDERR_FILENO, buf, r) < 0) { // echo back.
+            perror("echo failed");
+        }
     }
     return total_bytes;
 }
@@ -267,7 +271,7 @@ static void WaitForOk() {
 static int GetCoordinates(struct Vector *pos) {
     if (simulate_machine) return 1;
     DiscardAllInput(100);
-    
+
     fprintf(gcode_out, "M114\n"); // read coordinates.
     if (!quiet) fprintf(stderr, "Reading initial absolute position\n");
     char buffer[512];

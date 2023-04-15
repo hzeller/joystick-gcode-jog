@@ -23,7 +23,7 @@ static int FindInputEvent(int for_js, char *event_path, size_t len) {
     char sys_path[512];
     snprintf(sys_path, sizeof(sys_path),
              "/sys/class/input/js%d/device/", for_js);
-    
+
     int ev_id = -1;
     struct dirent *entry;
     DIR *dir = opendir(sys_path);
@@ -73,12 +73,16 @@ void JoystickRumble(int ms) {
     struct input_event play;
     play.type = EV_FF;
     play.code = rumble_effect_id;
-    play.value = 1;
-    write(rumble_device_fd, &play, sizeof(play));
+    play.value = 1;  /* on */
+    if (write(rumble_device_fd, &play, sizeof(play)) < 0) {
+        perror("rumble on");
+    }
     struct timespec tv;
     tv.tv_sec = 0;
     tv.tv_nsec = ms * 1000000L;
     nanosleep(&tv, NULL);
-    play.value = 0;
-    write(rumble_device_fd, &play, sizeof(play));
+    play.value = 0;  /* off */
+    if (write(rumble_device_fd, &play, sizeof(play)) < 0) {
+        perror("rumble off");
+    }
 }
